@@ -1,36 +1,209 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# متجر الوصل — متجر دروبشيبينغ AliExpress للسوق السعودي
 
-## Getting Started
+متجر إلكتروني كامل مبني على **Next.js 16** يستخدم واجهات AliExpress Open Platform
+(فئة `AE-Dropshipper`) طبقةَ توريد وتنفيذ خلفه، ومخصَّص للسوق السعودي.
 
-First, run the development server:
+---
+
+## التقنيات
+
+| المكوّن | الاختيار |
+| --- | --- |
+| الإطار | Next.js 16.3 (App Router · Turbopack · React 19.2) |
+| اللغة | TypeScript |
+| التنسيق | Tailwind CSS v4 |
+| قاعدة البيانات | PostgreSQL عبر Prisma 7.10 (driver adapter) |
+| المصادقة | better-auth |
+| التحقق | zod |
+
+---
+
+## التشغيل السريع
 
 ```bash
+npm install
+cp .env.example .env          # ثم عدّل القيم
+npm run db:deploy             # تطبيق الترحيلات
+npm run db:seed               # حسابا مسؤول وعميل
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+المتجر على <http://localhost:3000>
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+**حسابات البذر:**
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| الدور | البريد | كلمة المرور |
+| --- | --- | --- |
+| مسؤول | `admin@ae-ds-store.local` | `Admin12345` |
+| عميل | `customer@ae-ds-store.local` | `Customer12345` |
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## وضعا التشغيل
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+المشروع يعمل بلا مفاتيح AliExpress. المتغيّر `AE_MODE` يحكم ذلك:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+AE_MODE=mock   # بيانات وهمية مطابقة لبنية استجابات التوثيق (الافتراضي)
+AE_MODE=live   # استدعاء الواجهات الحقيقية
+```
 
-## Deploy on Vercel
+الوضعان يمرّان بالمسار نفسه — التوقيع والتحقق وتصنيف الأخطاء والسجل —
+فلا يفاجئك التبديل بسلوك مختلف. للانتقال إلى الإنتاج:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+AE_MODE=live
+AE_APP_KEY=...          # من لوحة تحكم AliExpress
+AE_APP_SECRET=...
+AE_ACCESS_TOKEN=...     # من حساب مشترٍ مفوَّض كحساب دروبشيبينغ
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## البنية
+
+```
+lib/
+├── aliexpress/          طبقة التكامل
+│   ├── signature.ts     HMAC-SHA256 وفق المستند الرسمي 836
+│   ├── client.ts        ناقل موحّد بوضعَي mock/live
+│   ├── errors.ts        تصنيف الأخطاء إلى ست فئات
+│   ├── schemas.ts       مخطّطات zod للاستجابات
+│   ├── mock-data.ts     محاكاة مطابقة بنيويًا
+│   └── api.ts           أغلفة مكتوبة النوع لثماني واجهات
+├── pricing/             تحويل USD→SAR + الهامش + الضريبة
+├── ksa/                 تحقق العنوان والجوال والعنوان الوطني
+├── orders.ts            محرّك الطلبيات ومنع الشراء المزدوج
+├── order-sync.ts        الاستقصاء الدوري للحالة والتتبع
+├── cart-service.ts      إعادة التحقق من السعر والمخزون
+└── catalog.ts           المرآة المحلية للمنتجات
+
+app/
+├── (المتجر)            الرئيسية · البحث · المنتج · السلة · الدفع
+├── orders/              الطلبات والتتبع
+├── admin/               لوحة الإدارة
+└── api/auth/            نقطة نهاية better-auth
+```
+
+---
+
+## قرارات تقنية أملاها التوثيق
+
+هذه ليست اختيارات أسلوبية — كل واحدة تعالج سلوكًا موثّقًا في واجهات AliExpress:
+
+### 1. الريال السعودي غير مدعوم إطلاقًا
+
+فحصُ التوثيق كاملًا (200 واجهة) لا يُظهر `SAR` في أي قائمة عملات. لذلك:
+
+- تُجلب الأسعار بالدولار وتُحوَّل محليًا
+- سعر الصرف يشمل **هامشًا احتياطيًا** لتقلّب الصرف ورسوم التحويل
+- سعر الصرف **يُثبَّت على الطلبية** وقت إنشائها، فلا تتغيّر الحسابات بأثر رجعي
+
+### 2. `skuAttr` وليس `sku_id`
+
+واجهة `ds.order.create` تتطلّب `sku_attr` بصيغته `73:175#Black Green;71:193#Polarized`،
+بينما `logistics.buyer.freight.calculate` تقبل `sku_id`. الحقلان مخزّنان منفصلين،
+والخلط بينهما يُفشل كل طلبية.
+
+### 3. `order_list` مصفوفة
+
+الطلبية الواحدة قد تنقسم إلى عدة طلبيات على AliExpress إن كانت المنتجات من بائعين
+مختلفين. العلاقة في قاعدة البيانات **واحد إلى متعدد** بين `Order` و`AeOrder`.
+
+### 4. `out_order_id` يُثبَّت قبل أي استدعاء
+
+يُولَّد ويُحفظ محليًا قبل لمس المنصة. فإذا انقطع الاتصال ولم نعرف مصير الطلبية،
+أعدنا الإرسال بالقيمة نفسها فترتد بـ `REPEATED_ORDER_ERROR` بدل الشراء مرتين.
+
+### 5. تصنيف الأخطاء يحدد سلوك إعادة المحاولة
+
+| الفئة | السلوك | أمثلة |
+| --- | --- | --- |
+| `RETRYABLE` | إعادة مباشرة | `ServiceUnavailable` · `TRACKING DATA NOT FOUND` |
+| `REFRESH_THEN_RETRY` | تحديث البيانات ثم الإعادة | `INVENTORY_HOLD_ERROR` · `DELIVERY_METHOD_NOT_EXIST` |
+| `INVALID_INPUT` | إصلاح المدخلات | أخطاء العنوان و CPF |
+| `AUTH` | تجديد التفويض | `IllegalAccessToken` |
+| `DUPLICATE` | ابحث ولا تُنشئ | `REPEATED_ORDER_ERROR` |
+| `FATAL` | تدخّل بشري | `A001`–`A006` · `IncompleteSignature` |
+
+خلط هذه الفئات في منطق واحد يُغرق النظام بمحاولات فاشلة أو يضاعف الشراء.
+
+### 6. `logistics_service_name` من المصدر حرفيًا
+
+يُؤخذ من `delivery_options[].code` ولا يُكتب يدويًا أبدًا، وإلا فالخطأ
+`DELIVERY_METHOD_NOT_EXIST`.
+
+### 7. احترام `ddpIncludeVATTax`
+
+الضريبة تُحتسب على الشحن **فقط** حين لا يشمله السعر. تجاهل الحقل يعني
+ازدواج الضريبة أو خسارتها.
+
+### 8. لا إشعارات فورية
+
+لا توفّر الواجهات webhooks، فالاستقصاء الدوري هو الخيار الوحيد. الفاصل الأدنى
+عشر دقائق للطلبية الواحدة تفاديًا لاستنزاف حصة الاستدعاءات.
+
+### 9. إعادة التحقق لحظة الشراء
+
+الأسعار والمخزون يُعاد جلبهما من المصدر عند فتح السلة وعند الدفع — لا عند العرض.
+
+### خصوصيات السوق السعودي
+
+- **`nat_addr`** — العنوان الوطني، حقل خاص بالسعودية في التوثيق، بصيغة
+  أربعة أحرف وأربعة أرقام (`RRDA2929`)
+- تطبيع الجوال من خمس صيغ إلى الصيغة التي تتوقعها الواجهة
+- المناطق محصورة في الثلاث عشرة منطقة الرسمية
+- ضريبة القيمة المضافة 15٪
+- التوقيت والتواريخ بتوقيت الرياض
+
+---
+
+## التحقق
+
+```bash
+npm run verify            # الكل (76 فحصًا)
+npm run verify:ae         # طبقة التكامل والتوقيع
+npm run verify:pricing    # التسعير وقواعد السعودية
+npm run verify:auth       # المصادقة
+npm run verify:orders     # دورة حياة الطلبية
+```
+
+يتضمّن `verify:ae` مطابقة السلسلة الأساسية للتوقيع مع المثال الحرفي في
+المستند 836، والتأكد من أن `skuAttr` يختلف عن `aeSkuId`، ومن ارتداد
+`REPEATED_ORDER_ERROR` عند إعادة الإرسال.
+
+---
+
+## قبل الإطلاق
+
+المشروع جاهز تقنيًا، وهذه العناصر خارج نطاق واجهات AliExpress:
+
+- [ ] **بوابة دفع سعودية** — مدى أو Tap أو Moyasar أو HyperPay.
+      حاليًا تُسجَّل الطلبية كمدفوعة مباشرةً في
+      [`app/actions/checkout.ts`](app/actions/checkout.ts)
+- [ ] **فوترة ZATCA** الإلكترونية
+- [ ] **مهمة مجدولة** لاستدعاء `syncActiveOrders` دوريًا
+- [ ] **سياسة إرجاع** تراعي أن نزاعات AliExpress تُدار يدويًا — لا توجد
+      واجهة للدروبشيبر لفتحها (فئة `aliexpress.issue.*` للبائعين لا المشترين)
+- [ ] تفعيل `requireEmailVerification` في [`lib/auth.ts`](lib/auth.ts)
+- [ ] `try_to_pay=true` بعد تفويض الحساب كحساب دروبشيبينغ
+- [ ] مراجعة `DEFAULT_MARGIN_PERCENT` بحيث يستوعب المرتجعات وتقلّب الصرف
+
+---
+
+## ملاحظات على الاعتماديات
+
+- **Prisma 7.10** هي أحدث نسخة **مستقرّة**؛ وسم `latest` يشير حاليًا إلى
+  `8.0.0-rc` وهي مرشّحة غير مستقرّة.
+- **`@better-auth/cli generate`** يُنتج مخطّطًا ينقصه حقل `issuer` الذي
+  يتطلّبه محرّك better-auth 1.7 نفسه. المخطّط هنا يتبع تعريف وقت التشغيل.
+- تحذير `npm audit` بشأن `deepmerge-ts` يأتي من `@prisma/config`، وهي
+  تبعية لأداة سطر الأوامر وقت البناء لا لشيفرة التشغيل.
+
+---
+
+## المرجع
+
+التوثيق العربي الكامل لواجهات AliExpress (200 واجهة مترجمة) في
+[`../AliExpress-API-AR`](../AliExpress-API-AR)، وخطة التكامل التفصيلية في
+[دليل الدروبشيبينغ](../AliExpress-API-AR/docs/guides/dropshipping-workflow.md).
