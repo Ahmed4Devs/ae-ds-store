@@ -1,0 +1,369 @@
+// مخطّط قاعدة البيانات — متجر دروبشيبينغ AliExpress للسوق السعودي
+// المرجع: توثيق AliExpress Open Platform، فئة AE-Dropshipper
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ===========================================================================
+//  المصادقة (better-auth)
+// ===========================================================================
+
+model User {
+  id            String   @id
+  name          String
+  email         String
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // حقول متجرنا
+  role  UserRole @default(CUSTOMER)
+  phone String?
+
+  sessions  Session[]
+  accounts  Account[]
+  addresses Address[]
+  orders    Order[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("verification")
+}
+
+// ===========================================================================
+//  الكتالوج — مرآة محلية لمنتجات AliExpress
+// ===========================================================================
+
+model Product {
+  id             String    @id @default(cuid())
+  /// معرّف المنتج لدى AliExpress (product_id / itemId)
+  aeProductId    String    @unique
+  title          String
+  titleAr        String?
+  description    String?
+  mainImageUrl   String
+  imageUrls      String[]  @default([])
+  videoUrl       String?
+  /// معرّف الفئة لدى AliExpress
+  aeCategoryId   String?
+  categoryName   String?
+  /// تقييم المنتج ومعدّل التقييم كما يعيدهما ds.text.search
+  rating         Decimal?  @db.Decimal(3, 2)
+  ordersCount    Int       @default(0)
+  /// عملة المصدر — دائمًا غير الريال لأن SAR غير مدعوم في واجهات AliExpress
+  sourceCurrency String    @default("USD")
+  /// خصائص المنتج كما تعيدها ds.product.get في ae_item_properties
+  properties     Json?
+  isPublished    Boolean   @default(false)
+  /// آخر مزامنة للسعر والمخزون من AliExpress
+  lastSyncedAt   DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  skus       ProductSku[]
+  orderItems OrderItem[]
+
+  @@index([isPublished])
+  @@index([aeCategoryId])
+}
+
+model ProductSku {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// معرّف الـ SKU لدى AliExpress — يُستخدم في logistics.buyer.freight.calculate
+  aeSkuId      String
+  /// ⚠️ الحقل الحاسم: هذا ما ترسله ds.order.create وليس aeSkuId
+  /// الصيغة كما في التوثيق: "73:175#Black Green;71:193#Polarized"
+  skuAttr      String
+  /// وصف مقروء للتنويعة يُعرض للعميل
+  variantLabel String?
+  imageUrl     String?
+  /// سعر المصدر بعملة المصدر (USD غالبًا)
+  sourcePrice  Decimal  @db.Decimal(12, 2)
+  /// سعر خصم الكميات إن وُجد (offer_bulk_sale_price)
+  bulkPrice    Decimal? @db.Decimal(12, 2)
+  bulkMinQty   Int?
+  /// المخزون المتاح (sku_available_stock)
+  stock        Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orderItems OrderItem[]
+
+  @@unique([productId, skuAttr])
+  @@index([aeSkuId])
+}
+
+// ===========================================================================
+//  العناوين — مخصّصة للسوق السعودي
+// ===========================================================================
+
+model Address {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  fullName     String
+  phone        String
+  /// رمز الدولة وفق ISO — SA للسعودية
+  country      String   @default("SA")
+  /// المنطقة/المحافظة (مطلوب في ds.order.create)
+  province     String
+  city         String
+  /// العنوان التفصيلي (مطلوب)
+  addressLine1 String
+  addressLine2 String?
+  postalCode   String?
+  /// رمز العنوان الوطني السعودي — يُمرَّر في ds_extend_request.trade_extra_param.nat_addr
+  /// الصيغة في أمثلة التوثيق: أربعة أحرف + أربعة أرقام (ABCD1234)
+  nationalAddr String?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  orders Order[]
+
+  @@index([userId])
+}
+
+// ===========================================================================
+//  الطلبيات
+// ===========================================================================
+
+/// حالة الطلبية في متجرنا (منفصلة عن حالة الطلبية لدى AliExpress)
+enum OrderStatus {
+  /// أُنشئت لدينا ولم تُدفع بعد
+  PENDING_PAYMENT
+  /// دُفعت لنا، ولم تُرسل إلى AliExpress بعد
+  PAID
+  /// جارٍ إنشاؤها على AliExpress
+  SOURCING
+  /// أُنشئت على AliExpress بنجاح
+  SOURCED
+  /// فشل إنشاؤها على AliExpress — تتطلب تدخّلًا
+  SOURCING_FAILED
+  /// شُحنت
+  SHIPPED
+  /// سُلّمت
+  DELIVERED
+  /// أُلغيت
+  CANCELLED
+}
+
+model Order {
+  id          String   @id @default(cuid())
+  /// رقم الطلبية الظاهر للعميل
+  orderNumber String   @unique
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  addressId   String?
+  address     Address? @relation(fields: [addressId], references: [id], onDelete: SetNull)
+
+  status OrderStatus @default(PENDING_PAYMENT)
+
+  /// لقطة كاملة للعنوان وقت الطلب (لأن العنوان قد يُعدَّل أو يُحذف لاحقًا)
+  shippingSnapshot Json
+
+  // --- المبالغ بالريال السعودي (ما يدفعه العميل) -------------------------
+  subtotalSar Decimal @db.Decimal(12, 2)
+  shippingSar Decimal @db.Decimal(12, 2)
+  vatSar      Decimal @db.Decimal(12, 2)
+  totalSar    Decimal @db.Decimal(12, 2)
+
+  // --- التكلفة الفعلية بعملة المصدر (ما ندفعه لعلي) ----------------------
+  costSourceCurrency String  @default("USD")
+  costSubtotal       Decimal @db.Decimal(12, 2)
+  costShipping       Decimal @db.Decimal(12, 2)
+  /// سعر الصرف المستخدم وقت الطلب — يُثبَّت حتى لا تتغير الحسابات لاحقًا
+  fxRateUsed         Decimal @db.Decimal(12, 6)
+
+  /// ⚠️ مفتاح منع التكرار المرسَل إلى ds.order.create في الحقل out_order_id
+  outOrderId String @unique
+
+  notes     String?
+  placedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  items    OrderItem[]
+  /// طلبية واحدة لدينا قد تنقسم إلى عدة طلبيات على AliExpress
+  /// لأن ds.order.create يعيد order_list كمصفوفة
+  aeOrders AeOrder[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model OrderItem {
+  id        String      @id @default(cuid())
+  orderId   String
+  order     Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String?
+  product   Product?    @relation(fields: [productId], references: [id], onDelete: SetNull)
+  skuId     String?
+  sku       ProductSku? @relation(fields: [skuId], references: [id], onDelete: SetNull)
+
+  // لقطات وقت الطلب — لا تعتمد على العلاقات لأن المنتج قد يُحذف
+  aeProductId   String
+  skuAttr       String
+  titleSnapshot String
+  imageSnapshot String?
+  variantLabel  String?
+
+  quantity       Int
+  /// سعر الوحدة بالريال الذي دفعه العميل
+  unitPriceSar   Decimal @db.Decimal(12, 2)
+  /// تكلفة الوحدة بعملة المصدر
+  unitCostSource Decimal @db.Decimal(12, 2)
+
+  /// رمز خدمة الشحن المختار — مأخوذ حرفيًا من delivery_options[].code
+  /// ويُرسَل في ds.order.create ضمن logistics_service_name
+  logisticsServiceName String
+  shippingCompany      String?
+  minDeliveryDays      Int?
+  maxDeliveryDays      Int?
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+}
+
+/// الطلبية كما أُنشئت فعليًا على AliExpress
+model AeOrder {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// معرّف الطلبية المُعاد في result.order_list[]
+  aeOrderId         String    @unique
+  /// حالة الطلبية كما يعيدها trade.ds.order.get
+  aeOrderStatus     String?
+  aeLogisticsStatus String?
+  /// الثواني المتبقية حتى انتهاء مهلة الدفع (pay_timeout_second)
+  payTimeoutSecond  Int?
+  /// تفصيل المبالغ كما يعيدها child_order_list
+  amountBreakdown   Json?
+  lastPolledAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  packages TrackingPackage[]
+
+  @@index([orderId])
+}
+
+/// طرد ضمن طلبية AliExpress — من ds.order.tracking.get
+model TrackingPackage {
+  id        String  @id @default(cuid())
+  aeOrderId String
+  aeOrder   AeOrder @relation(fields: [aeOrderId], references: [id], onDelete: Cascade)
+
+  /// رقم التتبع (mail_no)
+  mailNo       String
+  carrierName  String?
+  cpName       String?
+  cpWebsiteUrl String?
+  etaAt        DateTime?
+  /// عقد التتبع (detail_node_list) كما وردت
+  nodes        Json      @default("[]")
+  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime  @default(now())
+
+  @@unique([aeOrderId, mailNo])
+}
+
+// ===========================================================================
+//  التشغيل — سجلّ استدعاءات الواجهات وأسعار الصرف
+// ===========================================================================
+
+/// سجلّ استدعاءات واجهات AliExpress — أساسي لتشخيص الأخطاء غير القابلة لإعادة المحاولة
+model AeApiLog {
+  id             String   @id @default(cuid())
+  apiName        String
+  /// mock أو live
+  mode           String
+  success        Boolean
+  /// رمز الخطأ كما تعيده الواجهة (مثل REPEATED_ORDER_ERROR)
+  errorCode      String?
+  errorMessage   String?
+  /// هل الخطأ قابل لإعادة المحاولة وفق تصنيفنا
+  retryable      Boolean?
+  durationMs     Int?
+  /// مرجع اختياري لطلبية متجرنا
+  orderId        String?
+  requestSummary Json?
+  createdAt      DateTime @default(now())
+
+  @@index([apiName, createdAt])
+  @@index([orderId])
+}
+
+/// سعر صرف مثبّت — الريال غير مدعوم في واجهات AliExpress فنحوّله محليًا
+model FxRate {
+  id            String   @id @default(cuid())
+  baseCurrency  String
+  quoteCurrency String
+  rate          Decimal  @db.Decimal(12, 6)
+  source        String   @default("manual")
+  createdAt     DateTime @default(now())
+
+  @@index([baseCurrency, quoteCurrency, createdAt])
+}
