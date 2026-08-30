@@ -15,8 +15,9 @@
     "db:seed": "tsx prisma/seed.ts",
     "verify:ae": "tsx scripts/verify-ae.ts",
     "verify:pricing": "tsx scripts/verify-pricing.ts",
-    "verify": "npm run verify:ae && npm run verify:pricing && npm run verify:orders",
-    "verify:orders": "tsx scripts/verify-orders.ts"
+    "verify": "npm run verify:ae && npm run verify:pricing && npm run verify:auth && npm run verify:orders",
+    "verify:orders": "tsx scripts/verify-orders.ts",
+    "verify:auth": "tsx scripts/verify-auth.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

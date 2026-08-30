@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
 import { getProduct, searchProducts, type ProductDetail } from "@/lib/aliexpress";
@@ -69,90 +70,75 @@ export async function browse(params: {
 
 /**
  * يجلب تفاصيل منتج من AliExpress ويحفظ نسخة محلية.
- * الحفظ يتيح لصفحات الطلبيات عرض بيانات المنتج بعد أن يختفي من المصدر.
+ *
+ * مغلّفة بـ cache() لسبب جوهري: صفحة المنتج تستدعيها من generateMetadata
+ * ومن جسم الصفحة معًا. بدون التغليف يجري الاستدعاء مرتين بالتوازي،
+ * فتتسابق عمليتا الكتابة على الصفوف نفسها ويفشل الطلب.
  */
-export async function fetchAndMirrorProduct(
-  aeProductId: string,
-): Promise<ProductDetail> {
-  const detail = await getProduct(aeProductId);
-  const cfg = env();
+export const fetchAndMirrorProduct = cache(
+  async (aeProductId: string): Promise<ProductDetail> => {
+    const detail = await getProduct(aeProductId);
+    const cfg = env();
 
-  await prisma.product.upsert({
-    where: { aeProductId: detail.aeProductId },
-    create: {
-      aeProductId: detail.aeProductId,
-      title: detail.title,
-      description: detail.descriptionHtml,
-      mainImageUrl: detail.imageUrls[0] ?? "",
-      imageUrls: detail.imageUrls,
-      aeCategoryId: detail.categoryId,
-      rating: detail.rating ?? undefined,
-      ordersCount: detail.ordersCount,
-      sourceCurrency: detail.currency || cfg.AE_SOURCE_CURRENCY,
-      properties: detail.properties,
-      lastSyncedAt: new Date(),
-      skus: {
-        create: detail.skus.map((s) => ({
-          aeSkuId: s.aeSkuId,
-          skuAttr: s.skuAttr,
-          variantLabel: s.variantLabel,
-          imageUrl: s.imageUrl,
-          sourcePrice: s.sourcePrice,
-          bulkPrice: s.bulkPrice,
-          bulkMinQty: s.bulkMinQty,
-          stock: s.stock,
-        })),
-      },
-    },
-    update: {
-      title: detail.title,
-      description: detail.descriptionHtml,
-      mainImageUrl: detail.imageUrls[0] ?? "",
-      imageUrls: detail.imageUrls,
-      rating: detail.rating ?? undefined,
-      ordersCount: detail.ordersCount,
-      properties: detail.properties,
-      lastSyncedAt: new Date(),
-    },
-  });
-
-  // تحديث وحدات الـ SKU بالسعر والمخزون الحاليين
-  for (const s of detail.skus) {
-    await prisma.productSku.upsert({
-      where: {
-        productId_skuAttr: {
-          productId: (await productIdFor(detail.aeProductId)) ?? "",
-          skuAttr: s.skuAttr,
+    // كتابة واحدة متسلسلة داخل معاملة: تضمن الاتساق وتتجنّب
+    // استعلام N+1 الذي كان يجلب معرّف المنتج مرة لكل وحدة SKU.
+    await prisma.$transaction(async (tx) => {
+      const product = await tx.product.upsert({
+        where: { aeProductId: detail.aeProductId },
+        create: {
+          aeProductId: detail.aeProductId,
+          title: detail.title,
+          description: detail.descriptionHtml,
+          mainImageUrl: detail.imageUrls[0] ?? "",
+          imageUrls: detail.imageUrls,
+          aeCategoryId: detail.categoryId,
+          rating: detail.rating ?? undefined,
+          ordersCount: detail.ordersCount,
+          sourceCurrency: detail.currency || cfg.AE_SOURCE_CURRENCY,
+          properties: detail.properties,
+          lastSyncedAt: new Date(),
         },
-      },
-      create: {
-        productId: (await productIdFor(detail.aeProductId)) ?? "",
-        aeSkuId: s.aeSkuId,
-        skuAttr: s.skuAttr,
-        variantLabel: s.variantLabel,
-        imageUrl: s.imageUrl,
-        sourcePrice: s.sourcePrice,
-        bulkPrice: s.bulkPrice,
-        bulkMinQty: s.bulkMinQty,
-        stock: s.stock,
-      },
-      update: {
-        sourcePrice: s.sourcePrice,
-        bulkPrice: s.bulkPrice,
-        stock: s.stock,
-        variantLabel: s.variantLabel,
-        imageUrl: s.imageUrl,
-      },
+        update: {
+          title: detail.title,
+          description: detail.descriptionHtml,
+          mainImageUrl: detail.imageUrls[0] ?? "",
+          imageUrls: detail.imageUrls,
+          rating: detail.rating ?? undefined,
+          ordersCount: detail.ordersCount,
+          properties: detail.properties,
+          lastSyncedAt: new Date(),
+        },
+        select: { id: true },
+      });
+
+      for (const s of detail.skus) {
+        await tx.productSku.upsert({
+          where: {
+            productId_skuAttr: { productId: product.id, skuAttr: s.skuAttr },
+          },
+          create: {
+            productId: product.id,
+            aeSkuId: s.aeSkuId,
+            skuAttr: s.skuAttr,
+            variantLabel: s.variantLabel,
+            imageUrl: s.imageUrl,
+            sourcePrice: s.sourcePrice,
+            bulkPrice: s.bulkPrice,
+            bulkMinQty: s.bulkMinQty,
+            stock: s.stock,
+          },
+          update: {
+            aeSkuId: s.aeSkuId,
+            sourcePrice: s.sourcePrice,
+            bulkPrice: s.bulkPrice,
+            stock: s.stock,
+            variantLabel: s.variantLabel,
+            imageUrl: s.imageUrl,
+          },
+        });
+      }
     });
-  }
 
-  return detail;
-}
-
-async function productIdFor(aeProductId: string): Promise<string | null> {
-  const p = await prisma.product.findUnique({
-    where: { aeProductId },
-    select: { id: true },
-  });
-  return p?.id ?? null;
-}
+    return detail;
+  },
+);
