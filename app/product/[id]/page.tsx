@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { AddToCartForm } from "@/components/add-to-cart-form";
 import { Alert, Card } from "@/components/ui";
@@ -7,6 +8,8 @@ import { getShippingOptions, AeApiError } from "@/lib/aliexpress";
 import { retailUnitPriceSar, formatSar, toSar } from "@/lib/pricing";
 import { deliveryEstimateAr } from "@/lib/ksa";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
+import { getQueryClient } from "@/lib/query/client";
+import { queryKeys, type ShippingOptionDto } from "@/lib/query/keys";
 
 export async function generateMetadata(props: PageProps<"/product/[id]">) {
   const { id } = await props.params;
@@ -32,10 +35,28 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
 
   if (product.skus.length === 0) notFound();
 
-  let shipping: Awaited<ReturnType<typeof getShippingOptions>> = [];
+  /**
+   * جلب مسبق لخيارات الشحن بكمية واحدة.
+   * يملأ ذاكرة TanStack قبل إرسال HTML، فتظهر الخيارات فورًا بلا وميض
+   * تحميل، ثم يتولّى العميل إعادة الجلب عند تغيّر الكمية.
+   */
+  const queryClient = getQueryClient();
   let shippingError: string | null = null;
+
   try {
-    shipping = await getShippingOptions({ aeProductId: id, quantity: 1 });
+    const options = await getShippingOptions({ aeProductId: id, quantity: 1 });
+    const dto: ShippingOptionDto[] = options.map((o) => ({
+      code: o.code,
+      company: o.company,
+      feeSar: toSar(o.feeSource),
+      isFree: o.isFree,
+      hasTracking: o.hasTracking,
+      estimate: deliveryEstimateAr(o.minDays, o.maxDays, locale),
+      minDays: o.minDays,
+      maxDays: o.maxDays,
+      availableStock: o.availableStock,
+    }));
+    queryClient.setQueryData(queryKeys.shipping(id, 1), dto);
   } catch (e) {
     shippingError = e instanceof AeApiError ? e.customerMessage : "—";
   }
@@ -120,42 +141,38 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
               </div>
             )}
 
-            {inStock && shipping.length > 0 && (
+            {inStock && !shippingError && (
               <div className="mt-6">
-                <AddToCartForm
-                  aeProductId={product.aeProductId}
-                  locale={locale}
-                  labels={{
-                    variant: t.product.variant,
-                    available: t.product.available,
-                    shippingMethod: t.product.shippingMethod,
-                    trackable: t.product.trackable,
-                    notTrackable: t.product.notTrackable,
-                    free: t.product.free,
-                    quantity: t.product.quantity,
-                    addToCart: t.product.addToCart,
-                    adding: t.product.adding,
-                    increase: t.product.increase,
-                    decrease: t.product.decrease,
-                    lineProduct: t.product.lineProduct,
-                    lineShipping: t.product.lineShipping,
-                    totalNote: t.product.totalNote,
-                  }}
-                  skus={product.skus.map((s) => ({
-                    skuAttr: s.skuAttr,
-                    label: s.variantLabel,
-                    stock: s.stock,
-                    priceSar: retailUnitPriceSar(s.sourcePrice),
-                  }))}
-                  shipping={shipping.map((o) => ({
-                    code: o.code,
-                    company: o.company,
-                    feeSar: toSar(o.feeSource),
-                    isFree: o.isFree,
-                    hasTracking: o.hasTracking,
-                    estimate: deliveryEstimateAr(o.minDays, o.maxDays, locale),
-                  }))}
-                />
+                <HydrationBoundary state={dehydrate(queryClient)}>
+                  <AddToCartForm
+                    aeProductId={product.aeProductId}
+                    locale={locale}
+                    labels={{
+                      variant: t.product.variant,
+                      available: t.product.available,
+                      shippingMethod: t.product.shippingMethod,
+                      trackable: t.product.trackable,
+                      notTrackable: t.product.notTrackable,
+                      free: t.product.free,
+                      quantity: t.product.quantity,
+                      addToCart: t.product.addToCart,
+                      adding: t.product.adding,
+                      increase: t.product.increase,
+                      decrease: t.product.decrease,
+                      lineProduct: t.product.lineProduct,
+                      lineShipping: t.product.lineShipping,
+                      totalNote: t.product.totalNote,
+                      updatingShipping: t.product.updatingShipping,
+                      shippingErrorTitle: t.product.shippingErrorTitle,
+                    }}
+                    skus={product.skus.map((s) => ({
+                      skuAttr: s.skuAttr,
+                      label: s.variantLabel,
+                      stock: s.stock,
+                      priceSar: retailUnitPriceSar(s.sourcePrice),
+                    }))}
+                  />
+                </HydrationBoundary>
               </div>
             )}
 

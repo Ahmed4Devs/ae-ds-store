@@ -103,6 +103,7 @@ export const ar = {
     lineProduct: "المنتج × {n}",
     lineShipping: "الشحن",
     totalNote: "الإجمالي النهائي شاملًا الضريبة يظهر في صفحة السلة.",
+    updatingShipping: "يُحدَّث الشحن…",
   },
 
   cart: {
@@ -186,6 +187,9 @@ export const ar = {
     products: "المنتجات",
     quantityLabel: "الكمية",
     amountSummary: "ملخّص المبالغ",
+    liveUpdating: "يُحدَّث تلقائيًا",
+    lastChecked: "آخر تحقّق: {time}",
+    refreshNow: "تحديث الآن",
     steps: {
       confirm: "تأكيد الطلب",
       preparing: "التجهيز",
@@ -331,6 +335,8 @@ export const ar = {
     notRetriedAuto: " — هذا الخطأ لا يُعاد آليًا",
     syncResult: "تم استقصاء {polled} طلبية، وتحدّثت {updated}",
     syncFailed: "، وفشل {n}",
+    liveUpdating: "يُحدَّث تلقائيًا",
+    lastChecked: "آخر تحقّق: {time}",
   },
 };
 
@@ -441,6 +447,7 @@ export const en: Dictionary = {
     lineProduct: "Product × {n}",
     lineShipping: "Shipping",
     totalNote: "The final total including VAT is shown in the cart.",
+    updatingShipping: "Updating shipping…",
   },
 
   cart: {
@@ -525,6 +532,9 @@ export const en: Dictionary = {
     products: "Products",
     quantityLabel: "Quantity",
     amountSummary: "Amount summary",
+    liveUpdating: "Auto-updating",
+    lastChecked: "Last checked: {time}",
+    refreshNow: "Refresh now",
     steps: {
       confirm: "Order confirmed",
       preparing: "Preparing",
@@ -671,6 +681,8 @@ export const en: Dictionary = {
     notRetriedAuto: " — this error is not retried automatically",
     syncResult: "Polled {polled} orders, {updated} updated",
     syncFailed: ", {n} failed",
+    liveUpdating: "Auto-updating",
+    lastChecked: "Last checked: {time}",
   },
 };
 

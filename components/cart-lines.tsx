@@ -1,10 +1,8 @@
 "use client";
 
-import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { updateCartAction } from "@/app/actions/cart";
 import { Badge, Card, cx } from "@/components/ui";
+import { useUpdateCartItem } from "@/lib/query/hooks";
 import { formatSar } from "@/lib/pricing";
 import type { CartLine } from "@/lib/cart-service";
 import type { Locale } from "@/lib/i18n/shared";
@@ -49,18 +47,15 @@ function CartLineRow({
   labels: CartLineLabels;
   locale: Locale;
 }) {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const updateItem = useUpdateCartItem();
+  const pending = updateItem.isPending;
 
   function change(quantity: number) {
-    startTransition(async () => {
-      await updateCartAction({
-        aeProductId: line.aeProductId,
-        skuAttr: line.skuAttr,
-        logisticsServiceName: line.logisticsServiceName,
-        quantity,
-      });
-      router.refresh();
+    updateItem.mutate({
+      aeProductId: line.aeProductId,
+      skuAttr: line.skuAttr,
+      logisticsServiceName: line.logisticsServiceName,
+      quantity,
     });
   }
 
