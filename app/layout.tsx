@@ -1,14 +1,16 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Sans_Arabic } from "next/font/google";
+import { Tajawal } from "next/font/google";
 import "./globals.css";
 import { bcp47, dirFor, getDictionary, getLocale } from "@/lib/i18n";
 import { getTheme, THEME_SCRIPT } from "@/lib/theme";
 import { Providers } from "@/components/providers";
 
-const arabic = IBM_Plex_Sans_Arabic({
+// Tajawal لا يملك وزن 600، لذا نحمّل 700 و800 ونعيد ربط أوزان Tailwind
+// في globals.css حتى تبقى ثلاث درجات متمايزة بدل انهيار semibold على bold.
+const arabic = Tajawal({
   variable: "--font-arabic",
   subsets: ["arabic", "latin"],
-  weight: ["300", "400", "500", "600", "700"],
+  weight: ["300", "400", "500", "700", "800"],
   display: "swap",
 });
 

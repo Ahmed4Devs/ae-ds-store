@@ -14,6 +14,11 @@
 @theme {
   --font-sans: var(--font-arabic), "Segoe UI", system-ui, sans-serif;
 
+  /* Tajawal يقفز من 500 إلى 700 بلا وزن 600، فيصير font-semibold مطابقًا
+     لـ font-bold. نرفع bold إلى 800 لتبقى الأوزان الثلاثة متمايزة. */
+  --font-weight-semibold: 700;
+  --font-weight-bold: 800;
+
   /* لوحة العلامة */
   --color-brand-50: #ecfdf5;
   --color-brand-100: #d1fae5;
