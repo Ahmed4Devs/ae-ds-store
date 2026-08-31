@@ -17,6 +17,23 @@ const globalForPrisma = globalThis as unknown as {
   pgPool?: Pool;
 };
 
+/**
+ * يستخرج اسم المخطّط من مُعامل `?schema=` في رابط الاتصال.
+ *
+ * ⚠️ هذا المُعامل اصطلاح خاص بـ Prisma، وبرنامج تشغيل `pg` يتجاهله تمامًا.
+ * فأداة الترحيل تُنشئ الجداول في المخطّط المطلوب بينما يستعلم وقت التشغيل
+ * في `public` — وهو تعارض صامت خطير حين تشترك قاعدة البيانات مع مشروع
+ * آخر يحمل أسماء جداول مشابهة. لذا نقرأ القيمة هنا ونمرّرها للمُهيّئ صراحةً.
+ */
+function schemaFromUrl(url: string): string | undefined {
+  try {
+    const schema = new URL(url).searchParams.get("schema");
+    return schema && schema.trim() !== "" ? schema : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function createPool(): Pool {
   const pool = new Pool({
     connectionString: env().DATABASE_URL,
@@ -42,8 +59,10 @@ function createClient(): PrismaClient {
     globalForPrisma.pgPool = pool;
   }
 
+  const schema = schemaFromUrl(env().DATABASE_URL);
+
   return new PrismaClient({
-    adapter: new PrismaPg(pool),
+    adapter: new PrismaPg(pool, schema ? { schema } : undefined),
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
   });
 }

@@ -32,6 +32,18 @@ function section(t: string) {
 async function main() {
   console.log("\n=== تحقّق دورة حياة الطلبية ===");
 
+  section("المخطّط المستهدف في قاعدة البيانات");
+  // AeApiLog يخص مشروعنا وحده. نجاح الاستعلام عنه يثبت أن مُهيّئ التعريف
+  // يصيب المخطّط المضبوط في ?schema= لا المخطّط الافتراضي public — وهو
+  // تعارض صامت يفسد بيانات مشروع آخر يشارك القاعدة بأسماء جداول مشابهة.
+  let schemaOk = true;
+  try {
+    await prisma.aeApiLog.count();
+  } catch {
+    schemaOk = false;
+  }
+  check("Prisma يستعلم في المخطّط الصحيح لا في public", schemaOk);
+
   section("تجهيز سلة من بيانات حيّة");
   const search = await searchProducts({ pageSize: 2 });
   const [p1, p2] = search.items;
