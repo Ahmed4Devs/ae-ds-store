@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 
 /** يتحقق أن Prisma يستعلم في المخطّط الصحيح لا في public. */
 (async () => {
-  // AeApiLog و ProductSku موجودان في nextstore فقط، وغائبان عن public.
+  // AeApiLog و ProductSku جدولان يخصّان مشروعنا وحده داخل ae_ds_store.
   // نجاح الاستعلام عنهما دليل قاطع على إصابة المخطّط الصحيح.
   const aeLogs = await prisma.aeApiLog.count();
   const skus = await prisma.productSku.count();
