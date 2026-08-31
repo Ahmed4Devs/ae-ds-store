@@ -5,11 +5,16 @@ import { env } from "@/lib/env";
 import { formatSar, effectiveFxRate } from "@/lib/pricing";
 import { formatDateAr } from "@/lib/ksa";
 import { OrderStatusBadge } from "@/components/order-status";
+import { fill, getDictionary, getLocale } from "@/lib/i18n";
 
-export const metadata = { title: "لوحة الإدارة" };
+export async function generateMetadata() {
+  const t = await getDictionary();
+  return { title: t.nav.admin };
+}
 
 export default async function AdminHome() {
   const cfg = env();
+  const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
 
   const [
     totalOrders,
@@ -49,94 +54,90 @@ export default async function AdminHome() {
 
   return (
     <>
-      <h1 className="mb-6 text-2xl font-bold">نظرة عامة</h1>
+      <h1 className="mb-6 text-2xl font-bold">{t.admin.overview}</h1>
 
       {cfg.AE_MODE === "mock" && (
         <div className="mb-6">
-          <Alert tone="warning" title="وضع المحاكاة نشط">
-            جميع الطلبيات وهمية ولا تُشترى فعليًا من AliExpress. اضبط
-            <code className="mx-1 rounded bg-amber-200/40 px-1">AE_MODE=live</code>
-            مع مفاتيح التطبيق ورمز الوصول للتشغيل الحقيقي.
+          <Alert tone="warning" title={t.admin.mockModeTitle}>
+            {t.admin.mockModeBody}
           </Alert>
         </div>
       )}
 
       {needsAttention > 0 && (
         <div className="mb-6">
-          <Alert tone="danger" title={`${needsAttention} طلبية تحتاج تدخّلًا يدويًا`}>
-            فشل توريدها من AliExpress. راجع{" "}
+          <Alert tone="danger" title={fill(t.admin.needsAttention, { n: needsAttention })}>
             <Link href="/admin/orders?status=SOURCING_FAILED" className="underline">
-              قائمة الطلبيات
-            </Link>{" "}
-            وسجل الواجهات لمعرفة السبب.
+              {t.admin.needsAttentionBody}
+            </Link>
           </Alert>
         </div>
       )}
 
       <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Stat label="إجمالي الطلبيات" value={String(totalOrders)} />
-        <Stat label="الإيرادات" value={formatSar(totalRevenue)} />
+        <Stat label={t.admin.totalOrders} value={String(totalOrders)} />
+        <Stat label={t.admin.revenue} value={formatSar(totalRevenue, locale)} />
         <Stat
-          label="الهامش الإجمالي"
-          value={formatSar(grossMargin)}
+          label={t.admin.grossMargin}
+          value={formatSar(grossMargin, locale)}
           tone={grossMargin >= 0 ? "success" : "danger"}
         />
         <Stat
-          label="استدعاءات فاشلة"
+          label={t.admin.failedCalls}
           value={String(failedCalls)}
-          hint={fatalCalls > 0 ? `${fatalCalls} غير قابل لإعادة المحاولة` : undefined}
+          hint={fatalCalls > 0 ? fill(t.admin.notRetryable, { n: fatalCalls }) : undefined}
           tone={fatalCalls > 0 ? "danger" : "neutral"}
         />
       </div>
 
       <div className="mb-8 grid gap-4 sm:grid-cols-3">
         <Card className="p-4">
-          <p className="text-xs text-ink-500">وضع التكامل</p>
+          <p className="text-xs text-ink-500">{t.admin.integrationMode}</p>
           <p className="mt-1 font-semibold">
             <Badge tone={cfg.AE_MODE === "live" ? "success" : "warning"}>
-              {cfg.AE_MODE === "live" ? "إنتاج" : "محاكاة"}
+              {cfg.AE_MODE === "live" ? t.admin.live : t.admin.mock}
             </Badge>
           </p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs text-ink-500">سعر الصرف المطبَّق</p>
+          <p className="text-xs text-ink-500">{t.admin.fxRate}</p>
           <p className="mt-1 font-semibold nums">
-            {effectiveFxRate().toFixed(4)} ريال / دولار
+            {effectiveFxRate().toFixed(4)} {t.admin.fxRateUnit}
           </p>
           <p className="mt-0.5 text-xs text-ink-500 nums">
-            الأساس {cfg.FX_USD_TO_SAR} + هامش {cfg.FX_BUFFER_PERCENT}٪
+            {fill(t.admin.fxRateBase, { base: cfg.FX_USD_TO_SAR, buffer: cfg.FX_BUFFER_PERCENT })}
           </p>
         </Card>
         <Card className="p-4">
-          <p className="text-xs text-ink-500">هامش الربح الافتراضي</p>
-          <p className="mt-1 font-semibold nums">{cfg.DEFAULT_MARGIN_PERCENT}٪</p>
+          <p className="text-xs text-ink-500">{t.admin.defaultMargin}</p>
+          <p className="mt-1 font-semibold nums">{cfg.DEFAULT_MARGIN_PERCENT}%</p>
           <p className="mt-0.5 text-xs text-ink-500 nums">
-            ضريبة القيمة المضافة {cfg.VAT_PERCENT}٪
+            {fill(t.admin.vatLabel, { n: cfg.VAT_PERCENT })}
           </p>
         </Card>
       </div>
 
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between border-b border-[--color-border-app] px-5 py-3">
-          <p className="font-semibold">أحدث الطلبيات</p>
+          <p className="font-semibold">{t.admin.recentOrders}</p>
           <Link href="/admin/orders" className="text-sm text-brand-600 hover:underline">
-            عرض الكل
+            {t.home.viewAll}
           </Link>
         </div>
 
         {recentOrders.length === 0 ? (
-          <p className="p-8 text-center text-sm text-ink-500">لا توجد طلبيات بعد</p>
+          <p className="p-8 text-center text-sm text-ink-500">{t.admin.noOrders}</p>
         ) : (
           <div className="overflow-x-auto scroll-thin">
             <table className="w-full text-sm">
               <thead className="bg-[--color-background] text-xs text-ink-500">
                 <tr>
-                  <th className="px-5 py-2.5 text-right font-medium">رقم الطلبية</th>
-                  <th className="px-5 py-2.5 text-right font-medium">التاريخ</th>
-                  <th className="px-5 py-2.5 text-right font-medium">المنتجات</th>
-                  <th className="px-5 py-2.5 text-right font-medium">طلبيات علي</th>
-                  <th className="px-5 py-2.5 text-right font-medium">الإجمالي</th>
-                  <th className="px-5 py-2.5 text-right font-medium">الحالة</th>
+                  <th className="px-5 py-2.5 text-right font-medium">{t.admin.colOrderNumber}</th>
+                  <th className="px-5 py-2.5 text-right font-medium">{t.admin.colDate}</th>
+                  <th className="px-5 py-2.5 text-right font-medium">{t.admin.colProducts}</th>
+                  <th className="px-5 py-2.5 text-right font-medium">{t.admin.colAeOrders}</th>
+                  <th className="px-5 py-2.5 text-right font-medium">{t.admin.colTotal}</th>
+                  <th className="px-5 py-2.5 text-right font-medium">{t.admin.colStatus}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[--color-border-app]">
@@ -152,15 +153,15 @@ export default async function AdminHome() {
                       </Link>
                     </td>
                     <td className="px-5 py-3 text-ink-500">
-                      {formatDateAr(o.createdAt)}
+                      {formatDateAr(o.createdAt, locale)}
                     </td>
                     <td className="px-5 py-3 nums">{o._count.items}</td>
                     <td className="px-5 py-3 nums">{o._count.aeOrders}</td>
                     <td className="px-5 py-3 font-medium nums">
-                      {formatSar(Number(o.totalSar))}
+                      {formatSar(Number(o.totalSar), locale)}
                     </td>
                     <td className="px-5 py-3">
-                      <OrderStatusBadge status={o.status} />
+                      <OrderStatusBadge status={o.status} labels={t.orders.status} />
                     </td>
                   </tr>
                 ))}

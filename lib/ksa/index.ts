@@ -109,40 +109,55 @@ export function formatSaudiPhone(phone9: string): string {
   return `0${phone9.slice(0, 2)} ${phone9.slice(2, 5)} ${phone9.slice(5)}`;
 }
 
-/** تنسيق تاريخ ميلادي بالعربية بتوقيت الرياض. */
-export function formatDateAr(date: Date | string): string {
+type UiLocale = "ar" | "en";
+
+/** التقويم الميلادي والأرقام اللاتينية في الحالتين — أوضح في سياق الطلبيات. */
+function dateTag(locale: UiLocale): string {
+  return locale === "ar" ? "ar-SA-u-ca-gregory-nu-latn" : "en-SA";
+}
+
+/** تنسيق تاريخ ووقت بتوقيت الرياض. */
+export function formatDateAr(
+  date: Date | string,
+  locale: UiLocale = "ar",
+): string {
   const d = typeof date === "string" ? new Date(date) : date;
-  return new Intl.DateTimeFormat("ar-SA", {
+  return new Intl.DateTimeFormat(dateTag(locale), {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: "Asia/Riyadh",
-    calendar: "gregory",
-    numberingSystem: "latn",
   }).format(d);
 }
 
 /** تنسيق تاريخ فقط (بلا وقت). */
-export function formatDayAr(date: Date | string): string {
+export function formatDayAr(
+  date: Date | string,
+  locale: UiLocale = "ar",
+): string {
   const d = typeof date === "string" ? new Date(date) : date;
-  return new Intl.DateTimeFormat("ar-SA", {
+  return new Intl.DateTimeFormat(dateTag(locale), {
     dateStyle: "long",
     timeZone: "Asia/Riyadh",
-    calendar: "gregory",
-    numberingSystem: "latn",
   }).format(d);
 }
 
 /**
- * يحوّل مدى التسليم بالأيام إلى نص عربي واضح للعميل.
+ * يحوّل مدى التسليم بالأيام إلى نص واضح للعميل.
  * الوضوح هنا مقصود: مدد الشحن من الصين طويلة، وإخفاؤها يرفع نسبة المرتجعات.
  */
 export function deliveryEstimateAr(
   minDays: number | null,
   maxDays: number | null,
+  locale: UiLocale = "ar",
 ): string {
-  if (minDays == null && maxDays == null) return "مدة التسليم غير محددة";
-  if (minDays != null && maxDays != null) {
-    return `${minDays}–${maxDays} يوم عمل`;
+  const unit = locale === "ar" ? "يوم عمل" : "business days";
+
+  if (minDays == null && maxDays == null) {
+    return locale === "ar" ? "مدة التسليم غير محددة" : "Delivery time not specified";
   }
-  return `حتى ${maxDays ?? minDays} يوم عمل`;
+  if (minDays != null && maxDays != null) {
+    return `${minDays}–${maxDays} ${unit}`;
+  }
+  const single = maxDays ?? minDays;
+  return locale === "ar" ? `حتى ${single} ${unit}` : `Up to ${single} ${unit}`;
 }

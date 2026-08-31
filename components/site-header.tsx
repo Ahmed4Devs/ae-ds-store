@@ -2,43 +2,50 @@ import Link from "next/link";
 import { cartCount } from "@/lib/cart";
 import { getCurrentUser } from "@/lib/session";
 import { env } from "@/lib/env";
+import { fill, getDictionary, getLocale } from "@/lib/i18n";
+import { getTheme } from "@/lib/theme";
+import { LanguageSwitcher, ThemeToggle } from "@/components/preferences";
 
 export async function SiteHeader() {
-  const [count, user] = await Promise.all([cartCount(), getCurrentUser()]);
+  const [count, user, t, locale, theme] = await Promise.all([
+    cartCount(),
+    getCurrentUser(),
+    getDictionary(),
+    getLocale(),
+    getTheme(),
+  ]);
   const mode = env().AE_MODE;
 
   return (
     <>
       {mode === "mock" && (
         <div className="bg-amber-500 px-4 py-1.5 text-center text-xs font-medium text-amber-950">
-          وضع المحاكاة — البيانات وهمية ولا تُنشأ طلبيات حقيقية. غيّر
-          <code className="mx-1 rounded bg-amber-600/25 px-1">AE_MODE=live</code>
-          في ملف .env للتشغيل الفعلي.
+          {t.banner.mockMode}
         </div>
       )}
 
       <header className="sticky top-0 z-40 border-b border-[--color-border-app] bg-[--color-background]/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-4 px-4">
-          <Link href="/" className="flex items-center gap-2 font-bold text-lg">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4">
+          <Link href="/" className="flex shrink-0 items-center gap-2 text-lg font-bold">
             <span className="grid size-9 place-items-center rounded-lg bg-brand-600 text-white">
-              و
+              {locale === "ar" ? "و" : "W"}
             </span>
-            <span className="hidden sm:inline">متجر الوصل</span>
+            <span className="hidden sm:inline">{t.meta.siteName}</span>
           </Link>
 
-          <form action="/search" className="flex-1 max-w-xl">
+          <form action="/search" className="min-w-0 flex-1">
             <div className="relative">
               <input
                 name="q"
                 type="search"
-                placeholder="ابحث عن منتج…"
-                aria-label="البحث عن منتجات"
-                className="h-10 w-full rounded-full border border-[--color-border-app] bg-[--color-surface] pr-4 pl-11 text-sm outline-none focus:border-brand-500"
+                placeholder={t.nav.search}
+                aria-label={t.nav.searchLabel}
+                className="h-10 w-full rounded-full border border-[--color-border-app] bg-[--color-surface] px-4 text-sm outline-none focus:border-brand-500 ltr:pr-11 rtl:pl-11"
               />
               <button
                 type="submit"
-                aria-label="بحث"
-                className="absolute left-1 top-1 grid size-8 place-items-center rounded-full text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-800"
+                aria-label={t.nav.searchLabel}
+                className="absolute top-1 grid size-8 place-items-center rounded-full text-ink-500 hover:bg-ink-100 ltr:right-1 rtl:left-1 dark:hover:bg-ink-800"
               >
                 <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2">
                   <circle cx="11" cy="11" r="7" />
@@ -48,21 +55,34 @@ export async function SiteHeader() {
             </div>
           </form>
 
-          <nav className="flex items-center gap-1">
+          <nav className="flex shrink-0 items-center gap-1">
+            <div className="hidden items-center gap-2 md:flex">
+              <ThemeToggle
+                current={theme}
+                labels={{
+                  light: t.common.light,
+                  dark: t.common.dark,
+                  system: t.common.system,
+                  theme: t.common.theme,
+                }}
+              />
+              <LanguageSwitcher current={locale} label={t.common.language} />
+            </div>
+
             <Link
               href="/orders"
-              className="rounded-lg px-3 py-2 text-sm hover:bg-ink-100 dark:hover:bg-ink-800"
+              className="hidden rounded-lg px-3 py-2 text-sm hover:bg-ink-100 sm:inline-block dark:hover:bg-ink-800"
             >
-              طلباتي
+              {t.nav.myOrders}
             </Link>
 
             <Link
               href="/cart"
               className="relative rounded-lg px-3 py-2 text-sm hover:bg-ink-100 dark:hover:bg-ink-800"
             >
-              السلة
+              {t.nav.cart}
               {count > 0 && (
-                <span className="absolute -top-0.5 left-0 grid min-w-5 place-items-center rounded-full bg-brand-600 px-1 text-[11px] font-bold text-white nums">
+                <span className="nums absolute -top-0.5 grid min-w-5 place-items-center rounded-full bg-brand-600 px-1 text-[11px] font-bold text-white ltr:right-0 rtl:left-0">
                   {count}
                 </span>
               )}
@@ -73,53 +93,70 @@ export async function SiteHeader() {
                 href="/account"
                 className="rounded-lg px-3 py-2 text-sm font-medium hover:bg-ink-100 dark:hover:bg-ink-800"
               >
-                حسابي
+                {t.nav.account}
               </Link>
             ) : (
               <Link
                 href="/login"
                 className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
               >
-                دخول
+                {t.nav.login}
               </Link>
             )}
           </nav>
+        </div>
+
+        {/* التفضيلات على الشاشات الصغيرة */}
+        <div className="flex items-center justify-center gap-2 border-t border-[--color-border-app] px-4 py-2 md:hidden">
+          <ThemeToggle
+            current={theme}
+            labels={{
+              light: t.common.light,
+              dark: t.common.dark,
+              system: t.common.system,
+              theme: t.common.theme,
+            }}
+          />
+          <LanguageSwitcher current={locale} label={t.common.language} />
         </div>
       </header>
     </>
   );
 }
 
-export function SiteFooter() {
+export async function SiteFooter() {
+  const t = await getDictionary();
+
   return (
     <footer className="mt-auto border-t border-[--color-border-app] bg-[--color-surface]">
       <div className="mx-auto max-w-7xl px-4 py-10 text-sm">
         <div className="grid gap-8 sm:grid-cols-3">
           <div>
-            <p className="mb-2 font-bold">متجر الوصل</p>
-            <p className="text-ink-500 leading-relaxed">
-              منتجات عالمية تصل إلى جميع مناطق المملكة. الأسعار بالريال السعودي
-              شاملة ضريبة القيمة المضافة.
-            </p>
+            <p className="mb-2 font-bold">{t.meta.siteName}</p>
+            <p className="leading-relaxed text-ink-500">{t.footer.about}</p>
           </div>
           <div>
-            <p className="mb-2 font-semibold">روابط</p>
+            <p className="mb-2 font-semibold">{t.footer.links}</p>
             <ul className="space-y-1.5 text-ink-500">
-              <li><Link href="/search" className="hover:text-brand-600">تسوّق</Link></li>
-              <li><Link href="/orders" className="hover:text-brand-600">تتبّع طلبك</Link></li>
-              <li><Link href="/shipping-policy" className="hover:text-brand-600">سياسة الشحن</Link></li>
+              <li>
+                <Link href="/search" className="hover:text-brand-600">
+                  {t.footer.shop}
+                </Link>
+              </li>
+              <li>
+                <Link href="/orders" className="hover:text-brand-600">
+                  {t.footer.trackOrder}
+                </Link>
+              </li>
             </ul>
           </div>
           <div>
-            <p className="mb-2 font-semibold">ملاحظة مهمة</p>
-            <p className="text-ink-500 leading-relaxed">
-              مدة التوصيل تتراوح بين أسبوع وستة أسابيع حسب خيار الشحن المختار،
-              وتُعرض بوضوح قبل إتمام الطلب.
-            </p>
+            <p className="mb-2 font-semibold">{t.footer.noticeTitle}</p>
+            <p className="leading-relaxed text-ink-500">{t.footer.noticeBody}</p>
           </div>
         </div>
         <p className="mt-8 border-t border-[--color-border-app] pt-5 text-xs text-ink-500">
-          © {new Date().getFullYear()} متجر الوصل — جميع الحقوق محفوظة.
+          {fill(t.footer.rights, { year: new Date().getFullYear() })}
         </p>
       </div>
     </footer>

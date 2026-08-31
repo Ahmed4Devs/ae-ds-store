@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation";
 import { retrySourcingAction, syncOrdersAction } from "@/app/actions/admin";
 import { Button } from "@/components/ui";
 
-export function RetrySourcingButton({ orderId }: { orderId: string }) {
+export function RetrySourcingButton({
+  orderId,
+  labels,
+}: {
+  orderId: string;
+  labels: { retry: string; retrying: string };
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -24,7 +30,7 @@ export function RetrySourcingButton({ orderId }: { orderId: string }) {
           })
         }
       >
-        {pending ? "جارٍ المحاولة…" : "إعادة محاولة التوريد"}
+        {pending ? labels.retrying : labels.retry}
       </Button>
       {msg && (
         <p
@@ -42,7 +48,11 @@ export function RetrySourcingButton({ orderId }: { orderId: string }) {
   );
 }
 
-export function SyncOrdersButton() {
+export function SyncOrdersButton({
+  labels,
+}: {
+  labels: { sync: string; syncing: string };
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
@@ -61,7 +71,7 @@ export function SyncOrdersButton() {
           })
         }
       >
-        {pending ? "جارٍ المزامنة…" : "مزامنة الحالات الآن"}
+        {pending ? labels.syncing : labels.sync}
       </Button>
       {msg && <span className="text-xs text-ink-500">{msg}</span>}
     </div>

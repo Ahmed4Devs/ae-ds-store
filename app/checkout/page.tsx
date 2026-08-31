@@ -7,14 +7,23 @@ import { buildCartSummary } from "@/lib/cart-service";
 import { formatSar } from "@/lib/pricing";
 import { getCurrentUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
+import { fill, getDictionary, getLocale } from "@/lib/i18n";
 
-export const metadata = { title: "إتمام الشراء" };
+export async function generateMetadata() {
+  const t = await getDictionary();
+  return { title: t.checkout.title };
+}
 
 export default async function CheckoutPage() {
-  const cart = await readCart();
+  const [cart, t, locale] = await Promise.all([
+    readCart(),
+    getDictionary(),
+    getLocale(),
+  ]);
+
   if (cart.length === 0) redirect("/cart");
 
-  const summary = await buildCartSummary(cart);
+  const summary = await buildCartSummary(cart, locale);
   if (summary.hasIssues) redirect("/cart");
 
   const user = await getCurrentUser();
@@ -30,12 +39,13 @@ export default async function CheckoutPage() {
       <SiteHeader />
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8">
-        <h1 className="mb-6 text-2xl font-bold">إتمام الشراء</h1>
+        <h1 className="mb-6 text-2xl font-bold">{t.checkout.title}</h1>
 
         <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
           <div className="space-y-5">
             <CheckoutForm
               isLoggedIn={Boolean(user)}
+              labels={t.checkout}
               defaults={
                 savedAddress
                   ? {
@@ -55,7 +65,7 @@ export default async function CheckoutPage() {
 
           <div>
             <Card className="sticky top-20 p-5">
-              <p className="mb-4 font-semibold">ملخّص الطلب</p>
+              <p className="mb-4 font-semibold">{t.cart.summary}</p>
 
               <ul className="mb-4 space-y-3 border-b border-[--color-border-app] pb-4">
                 {summary.lines.map((l) => (
@@ -73,12 +83,12 @@ export default async function CheckoutPage() {
                       <span className="line-clamp-2 text-xs leading-relaxed">
                         {l.title}
                       </span>
-                      <span className="mt-0.5 block text-xs text-ink-500 nums">
+                      <span className="nums mt-0.5 block text-xs text-ink-500">
                         {l.variantLabel} × {l.quantity}
                       </span>
                     </span>
-                    <span className="shrink-0 text-xs font-medium nums">
-                      {formatSar(l.linePriceSar)}
+                    <span className="nums shrink-0 text-xs font-medium">
+                      {formatSar(l.linePriceSar, locale)}
                     </span>
                   </li>
                 ))}
@@ -86,28 +96,26 @@ export default async function CheckoutPage() {
 
               <dl className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-ink-500">المجموع الفرعي</dt>
-                  <dd className="nums">{formatSar(summary.subtotalSar)}</dd>
+                  <dt className="text-ink-500">{t.cart.subtotal}</dt>
+                  <dd className="nums">{formatSar(summary.subtotalSar, locale)}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-ink-500">الشحن</dt>
-                  <dd className="nums">{formatSar(summary.shippingSar)}</dd>
+                  <dt className="text-ink-500">{t.cart.shipping}</dt>
+                  <dd className="nums">{formatSar(summary.shippingSar, locale)}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-ink-500">ضريبة القيمة المضافة</dt>
-                  <dd className="nums">{formatSar(summary.vatSar)}</dd>
+                  <dt className="text-ink-500">{t.cart.vat}</dt>
+                  <dd className="nums">{formatSar(summary.vatSar, locale)}</dd>
                 </div>
                 <div className="flex justify-between border-t border-[--color-border-app] pt-3 text-base font-bold">
-                  <dt>الإجمالي</dt>
-                  <dd className="nums">{formatSar(summary.totalSar)}</dd>
+                  <dt>{t.cart.total}</dt>
+                  <dd className="nums">{formatSar(summary.totalSar, locale)}</dd>
                 </div>
               </dl>
 
               {summary.maxDeliveryDays != null && (
                 <p className="mt-4 text-xs leading-relaxed text-ink-500">
-                  التوصيل المتوقّع حتى{" "}
-                  <span className="font-semibold nums">{summary.maxDeliveryDays}</span>{" "}
-                  يوم عمل.
+                  {fill(t.checkout.deliveryNote, { n: summary.maxDeliveryDays })}
                 </p>
               )}
             </Card>
@@ -115,10 +123,8 @@ export default async function CheckoutPage() {
         </div>
 
         <div className="mt-6">
-          <Alert tone="info" title="بوابة الدفع">
-            هذه نسخة تطويرية: لم تُدمج بوابة دفع سعودية بعد. عند الضغط على
-            «تأكيد الطلب» تُنشأ الطلبية وتُسجَّل كمدفوعة مباشرةً لأغراض
-            الاختبار. اربط مدى أو Tap أو Moyasar قبل الإطلاق.
+          <Alert tone="info" title={t.checkout.paymentTitle}>
+            {t.checkout.paymentBody}
           </Alert>
         </div>
       </main>

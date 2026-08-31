@@ -1,8 +1,15 @@
 import Link from "next/link";
 import { formatSar } from "@/lib/pricing";
 import type { CatalogCard } from "@/lib/catalog";
+import type { Locale } from "@/lib/i18n/shared";
 
-export function ProductCard({ product }: { product: CatalogCard }) {
+export function ProductCard({
+  product,
+  locale = "ar",
+}: {
+  product: CatalogCard;
+  locale?: Locale;
+}) {
   const hasDiscount =
     product.comparePriceSar != null && product.comparePriceSar > product.priceSar;
   const discountPercent = hasDiscount
@@ -23,7 +30,7 @@ export function ProductCard({ product }: { product: CatalogCard }) {
           className="size-full object-cover transition duration-300 group-hover:scale-105"
         />
         {hasDiscount && (
-          <span className="absolute top-2 right-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white nums">
+          <span className="nums absolute top-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white ltr:left-2 rtl:right-2">
             −{discountPercent}%
           </span>
         )}
@@ -36,12 +43,12 @@ export function ProductCard({ product }: { product: CatalogCard }) {
 
         <div className="mt-auto pt-3">
           <div className="flex items-baseline gap-2">
-            <span className="text-lg font-bold text-brand-700 dark:text-brand-400 nums">
-              {formatSar(product.priceSar)}
+            <span className="nums text-lg font-bold text-brand-700 dark:text-brand-400">
+              {formatSar(product.priceSar, locale)}
             </span>
             {hasDiscount && (
-              <span className="text-xs text-ink-400 line-through nums">
-                {formatSar(product.comparePriceSar!)}
+              <span className="nums text-xs text-ink-400 line-through">
+                {formatSar(product.comparePriceSar!, locale)}
               </span>
             )}
           </div>
@@ -56,7 +63,7 @@ export function ProductCard({ product }: { product: CatalogCard }) {
               </span>
             )}
             {product.ordersCount > 0 && (
-              <span className="nums">{product.ordersCount.toLocaleString("en")} طلب</span>
+              <span className="nums">{product.ordersCount.toLocaleString("en")}</span>
             )}
           </div>
         </div>
@@ -65,11 +72,17 @@ export function ProductCard({ product }: { product: CatalogCard }) {
   );
 }
 
-export function ProductGrid({ products }: { products: CatalogCard[] }) {
+export function ProductGrid({
+  products,
+  locale = "ar",
+}: {
+  products: CatalogCard[];
+  locale?: Locale;
+}) {
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
       {products.map((p) => (
-        <ProductCard key={p.aeProductId} product={p} />
+        <ProductCard key={p.aeProductId} product={p} locale={locale} />
       ))}
     </div>
   );

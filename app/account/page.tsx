@@ -6,11 +6,15 @@ import { ButtonLink, Card } from "@/components/ui";
 import { getCurrentUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { formatSaudiPhone } from "@/lib/ksa";
+import { getDictionary } from "@/lib/i18n";
 
-export const metadata = { title: "حسابي" };
+export async function generateMetadata() {
+  const t = await getDictionary();
+  return { title: t.account.title };
+}
 
 export default async function AccountPage() {
-  const user = await getCurrentUser();
+  const [user, t] = await Promise.all([getCurrentUser(), getDictionary()]);
   if (!user) redirect("/login");
 
   const [orderCount, addresses] = await Promise.all([
@@ -29,7 +33,7 @@ export default async function AccountPage() {
       <SiteHeader />
 
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-8">
-        <h1 className="mb-6 text-2xl font-bold">حسابي</h1>
+        <h1 className="mb-6 text-2xl font-bold">{t.account.title}</h1>
 
         <Card className="mb-5 p-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -39,24 +43,24 @@ export default async function AccountPage() {
                 {user.email}
               </p>
             </div>
-            <SignOutButton />
+            <SignOutButton label={t.nav.logout} />
           </div>
         </Card>
 
         <div className="mb-5 grid gap-4 sm:grid-cols-2">
           <Card className="p-5">
-            <p className="text-sm text-ink-500">عدد الطلبات</p>
+            <p className="text-sm text-ink-500">{t.account.ordersCount}</p>
             <p className="mt-1 text-2xl font-bold nums">{orderCount}</p>
             <Link
               href="/orders"
               className="mt-2 inline-block text-sm text-brand-600 hover:underline"
             >
-              عرض الطلبات
+              {t.account.viewOrders}
             </Link>
           </Card>
 
           <Card className="p-5">
-            <p className="text-sm text-ink-500">العناوين المحفوظة</p>
+            <p className="text-sm text-ink-500">{t.account.savedAddresses}</p>
             <p className="mt-1 text-2xl font-bold nums">{addresses.length}</p>
           </Card>
         </div>
@@ -64,7 +68,7 @@ export default async function AccountPage() {
         {addresses.length > 0 && (
           <Card className="mb-5 overflow-hidden">
             <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
-              عناويني
+              {t.account.myAddresses}
             </p>
             <ul className="divide-y divide-[--color-border-app]">
               {addresses.map((a) => (
@@ -78,7 +82,7 @@ export default async function AccountPage() {
                   </p>
                   {a.nationalAddr && (
                     <p className="text-xs text-ink-500 nums">
-                      العنوان الوطني: {a.nationalAddr}
+                      {t.account.nationalAddressLabel}: {a.nationalAddr}
                     </p>
                   )}
                 </li>
@@ -89,12 +93,12 @@ export default async function AccountPage() {
 
         {isAdmin && (
           <Card className="p-5">
-            <p className="mb-1 font-semibold">لوحة الإدارة</p>
+            <p className="mb-1 font-semibold">{t.account.adminTitle}</p>
             <p className="mb-3 text-sm text-ink-500">
-              متابعة الطلبيات وسجل استدعاءات الواجهات.
+              {t.account.adminBody}
             </p>
             <ButtonLink href="/admin" variant="outline">
-              فتح لوحة الإدارة
+              {t.account.adminCta}
             </ButtonLink>
           </Card>
         )}

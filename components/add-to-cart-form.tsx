@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { addToCartAction } from "@/app/actions/cart";
 import { Button, cx } from "@/components/ui";
 import { formatSar } from "@/lib/pricing";
+import { fill, type Locale } from "@/lib/i18n/shared";
 
 export interface SkuOption {
   skuAttr: string;
@@ -22,14 +23,35 @@ export interface ShippingChoice {
   estimate: string;
 }
 
+export interface AddToCartLabels {
+  variant: string;
+  available: string;
+  shippingMethod: string;
+  trackable: string;
+  notTrackable: string;
+  free: string;
+  quantity: string;
+  addToCart: string;
+  adding: string;
+  increase: string;
+  decrease: string;
+  lineProduct: string;
+  lineShipping: string;
+  totalNote: string;
+}
+
 export function AddToCartForm({
   aeProductId,
   skus,
   shipping,
+  labels,
+  locale = "ar",
 }: {
   aeProductId: string;
   skus: SkuOption[];
   shipping: ShippingChoice[];
+  labels: AddToCartLabels;
+  locale?: Locale;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -63,10 +85,9 @@ export function AddToCartForm({
 
   return (
     <div className="space-y-6">
-      {/* التنويعة */}
       {skus.length > 1 && (
         <div>
-          <p className="mb-2 text-sm font-medium">الخيار</p>
+          <p className="mb-2 text-sm font-medium">{labels.variant}</p>
           <div className="flex flex-wrap gap-2">
             {skus.map((s) => {
               const out = s.stock === 0;
@@ -92,15 +113,14 @@ export function AddToCartForm({
               );
             })}
           </div>
-          <p className="mt-2 text-xs text-ink-500 nums">
-            المتوفّر: {selectedSku.stock} قطعة
+          <p className="nums mt-2 text-xs text-ink-500">
+            {fill(labels.available, { n: selectedSku.stock })}
           </p>
         </div>
       )}
 
-      {/* خيار الشحن */}
       <div>
-        <p className="mb-2 text-sm font-medium">طريقة الشحن</p>
+        <p className="mb-2 text-sm font-medium">{labels.shippingMethod}</p>
         <div className="space-y-2">
           {shipping.map((o) => (
             <label
@@ -123,19 +143,19 @@ export function AddToCartForm({
               <span className="flex-1">
                 <span className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-sm font-medium">{o.company}</span>
-                  <span className="text-sm font-bold nums">
-                    {o.isFree ? "مجاني" : formatSar(o.feeSar)}
+                  <span className="nums text-sm font-bold">
+                    {o.isFree ? labels.free : formatSar(o.feeSar, locale)}
                   </span>
                 </span>
                 <span className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-500">
                   <span>{o.estimate}</span>
                   {o.hasTracking ? (
                     <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200">
-                      قابل للتتبع
+                      {labels.trackable}
                     </span>
                   ) : (
                     <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
-                      بدون تتبع
+                      {labels.notTrackable}
                     </span>
                   )}
                 </span>
@@ -145,23 +165,22 @@ export function AddToCartForm({
         </div>
       </div>
 
-      {/* الكمية والإضافة */}
       <div className="flex items-end gap-3">
         <div>
-          <p className="mb-2 text-sm font-medium">الكمية</p>
+          <p className="mb-2 text-sm font-medium">{labels.quantity}</p>
           <div className="flex items-center rounded-lg border border-[--color-border-app]">
             <button
               type="button"
-              aria-label="إنقاص"
+              aria-label={labels.decrease}
               onClick={() => setQty((q) => Math.max(1, q - 1))}
               className="size-11 text-lg hover:bg-ink-100 dark:hover:bg-ink-800"
             >
               −
             </button>
-            <span className="w-12 text-center text-sm font-medium nums">{qty}</span>
+            <span className="nums w-12 text-center text-sm font-medium">{qty}</span>
             <button
               type="button"
-              aria-label="زيادة"
+              aria-label={labels.increase}
               onClick={() => setQty((q) => Math.min(maxQty, q + 1))}
               className="size-11 text-lg hover:bg-ink-100 dark:hover:bg-ink-800"
             >
@@ -176,26 +195,25 @@ export function AddToCartForm({
           disabled={pending || selectedSku.stock === 0}
           onClick={submit}
         >
-          {pending ? "جارٍ الإضافة…" : "أضف إلى السلة"}
+          {pending ? labels.adding : labels.addToCart}
         </Button>
       </div>
 
-      {/* الإجمالي التقديري */}
       <div className="rounded-lg bg-[--color-surface] p-4 text-sm">
         <div className="flex justify-between">
-          <span className="text-ink-500">
-            المنتج × <span className="nums">{qty}</span>
+          <span className="text-ink-500">{fill(labels.lineProduct, { n: qty })}</span>
+          <span className="nums">
+            {formatSar(selectedSku.priceSar * qty, locale)}
           </span>
-          <span className="nums">{formatSar(selectedSku.priceSar * qty)}</span>
         </div>
         <div className="mt-1.5 flex justify-between">
-          <span className="text-ink-500">الشحن</span>
+          <span className="text-ink-500">{labels.lineShipping}</span>
           <span className="nums">
-            {selectedShip.isFree ? "مجاني" : formatSar(selectedShip.feeSar)}
+            {selectedShip.isFree ? labels.free : formatSar(selectedShip.feeSar, locale)}
           </span>
         </div>
         <p className="mt-3 border-t border-[--color-border-app] pt-3 text-xs text-ink-500">
-          الإجمالي النهائي شاملًا الضريبة يظهر في صفحة السلة.
+          {labels.totalNote}
         </p>
       </div>
 

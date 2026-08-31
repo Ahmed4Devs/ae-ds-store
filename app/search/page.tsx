@@ -3,15 +3,12 @@ import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { ProductGrid } from "@/components/product-card";
 import { browse } from "@/lib/catalog";
 import { EmptyState, ButtonLink } from "@/components/ui";
+import { fill, getDictionary, getLocale } from "@/lib/i18n";
 
-export const metadata = { title: "نتائج البحث" };
-
-const SORTS = [
-  { value: "", label: "الأكثر صلة" },
-  { value: "orders,desc", label: "الأكثر مبيعًا" },
-  { value: "min_price,asc", label: "السعر: من الأقل" },
-  { value: "min_price,desc", label: "السعر: من الأعلى" },
-] as const;
+export async function generateMetadata() {
+  const t = await getDictionary();
+  return { title: t.search.titleAll };
+}
 
 export default async function SearchPage(props: PageProps<"/search">) {
   const sp = await props.searchParams;
@@ -20,13 +17,24 @@ export default async function SearchPage(props: PageProps<"/search">) {
   const sort = typeof sp.sort === "string" ? sp.sort : "";
   const page = Number(typeof sp.page === "string" ? sp.page : "1") || 1;
 
-  const result = await browse({
-    keyword,
-    categoryId: category,
-    page,
-    pageSize: 24,
-    sortBy: (sort || undefined) as never,
-  });
+  const [result, t, locale] = await Promise.all([
+    browse({
+      keyword,
+      categoryId: category,
+      page,
+      pageSize: 24,
+      sortBy: (sort || undefined) as never,
+    }),
+    getDictionary(),
+    getLocale(),
+  ]);
+
+  const sorts = [
+    { value: "", label: t.search.sortRelevance },
+    { value: "orders,desc", label: t.search.sortBestSelling },
+    { value: "min_price,asc", label: t.search.sortPriceAsc },
+    { value: "min_price,desc", label: t.search.sortPriceDesc },
+  ];
 
   const totalPages = Math.max(1, Math.ceil(result.total / 24));
 
@@ -52,15 +60,15 @@ export default async function SearchPage(props: PageProps<"/search">) {
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold">
-              {keyword ? `نتائج البحث عن «${keyword}»` : "جميع المنتجات"}
+              {keyword ? fill(t.search.title, { q: keyword }) : t.search.titleAll}
             </h1>
-            <p className="mt-1 text-sm text-ink-500 nums">
-              {result.total.toLocaleString("en")} منتج
+            <p className="nums mt-1 text-sm text-ink-500">
+              {fill(t.search.count, { n: result.total.toLocaleString("en") })}
             </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            {SORTS.map((s) => (
+            {sorts.map((s) => (
               <Link
                 key={s.value}
                 href={buildHref({ sort: s.value, page: undefined })}
@@ -79,13 +87,13 @@ export default async function SearchPage(props: PageProps<"/search">) {
 
         {result.cards.length === 0 ? (
           <EmptyState
-            title="لا توجد نتائج"
-            description="جرّب كلمات بحث أخرى أو تصفّح جميع المنتجات."
-            action={<ButtonLink href="/search">عرض جميع المنتجات</ButtonLink>}
+            title={t.search.emptyTitle}
+            description={t.search.emptyBody}
+            action={<ButtonLink href="/search">{t.search.emptyCta}</ButtonLink>}
           />
         ) : (
           <>
-            <ProductGrid products={result.cards} />
+            <ProductGrid products={result.cards} locale={locale} />
 
             {totalPages > 1 && (
               <nav className="mt-10 flex items-center justify-center gap-2">
@@ -94,18 +102,18 @@ export default async function SearchPage(props: PageProps<"/search">) {
                     href={buildHref({ page: page - 1 })}
                     className="rounded-lg border border-[--color-border-app] px-4 py-2 text-sm hover:border-brand-400"
                   >
-                    السابق
+                    {t.common.previous}
                   </Link>
                 )}
-                <span className="px-3 text-sm text-ink-500 nums">
-                  {page} من {totalPages}
+                <span className="nums px-3 text-sm text-ink-500">
+                  {fill(t.common.pageOf, { current: page, total: totalPages })}
                 </span>
                 {page < totalPages && (
                   <Link
                     href={buildHref({ page: page + 1 })}
                     className="rounded-lg border border-[--color-border-app] px-4 py-2 text-sm hover:border-brand-400"
                   >
-                    التالي
+                    {t.common.next}
                   </Link>
                 )}
               </nav>

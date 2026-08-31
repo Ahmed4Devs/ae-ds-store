@@ -1,15 +1,16 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
-
-const NAV = [
-  { href: "/admin", label: "نظرة عامة" },
-  { href: "/admin/orders", label: "الطلبيات" },
-  { href: "/admin/api-log", label: "سجل الواجهات" },
-] as const;
+import { getDictionary } from "@/lib/i18n";
 
 export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
-  const user = await getCurrentUser();
+  const [user, t] = await Promise.all([getCurrentUser(), getDictionary()]);
+
+  const nav = [
+    { href: "/admin", label: t.admin.overview },
+    { href: "/admin/orders", label: t.admin.orders },
+    { href: "/admin/api-log", label: t.admin.apiLog },
+  ];
 
   // حماية على مستوى التخطيط: كل صفحة تحته تمر من هنا
   if (!user) redirect("/login");
@@ -20,10 +21,10 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
       <header className="border-b border-[--color-border-app] bg-[--color-surface]">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
           <Link href="/admin" className="font-bold">
-            لوحة الإدارة
+            {t.nav.admin}
           </Link>
           <nav className="flex gap-1 text-sm">
-            {NAV.map((n) => (
+            {nav.map((n) => (
               <Link
                 key={n.href}
                 href={n.href}
@@ -35,9 +36,9 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
           </nav>
           <Link
             href="/"
-            className="mr-auto text-sm text-ink-500 hover:text-brand-600"
+            className="ms-auto text-sm text-ink-500 hover:text-brand-600"
           >
-            ← المتجر
+            {t.common.backToStore}
           </Link>
         </div>
       </header>

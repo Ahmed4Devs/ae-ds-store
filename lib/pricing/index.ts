@@ -152,11 +152,12 @@ function round2(n: number): number {
 
 /**
  * تنسيق مبلغ بالريال السعودي.
- * تُستخدم الأرقام اللاتينية عمدًا لأنها العرف السائد في المتاجر السعودية
- * وأسهل في المسح البصري للأسعار.
+ * تُستخدم الأرقام اللاتينية عمدًا في الحالتين لأنها العرف السائد في
+ * المتاجر السعودية وأسهل في المسح البصري للأسعار.
  */
-export function formatSar(amount: number): string {
-  return new Intl.NumberFormat("ar-SA-u-nu-latn", {
+export function formatSar(amount: number, locale: "ar" | "en" = "ar"): string {
+  const tag = locale === "ar" ? "ar-SA-u-nu-latn" : "en-SA";
+  return new Intl.NumberFormat(tag, {
     style: "currency",
     currency: "SAR",
     minimumFractionDigits: 2,

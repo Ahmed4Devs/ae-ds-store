@@ -1,37 +1,36 @@
 import { Badge } from "@/components/ui";
+import type { Dictionary } from "@/lib/i18n/shared";
 
-/** ترجمة حالات الطلبية مع نبرة لونية مناسبة. */
-const STATUS_MAP: Record<
-  string,
-  { label: string; tone: "neutral" | "info" | "success" | "warning" | "danger" }
-> = {
-  PENDING_PAYMENT: { label: "بانتظار الدفع", tone: "warning" },
-  PAID: { label: "تم الدفع", tone: "info" },
-  SOURCING: { label: "جارٍ التوريد", tone: "info" },
-  SOURCED: { label: "قيد التجهيز", tone: "info" },
-  SOURCING_FAILED: { label: "يحتاج مراجعة", tone: "danger" },
-  SHIPPED: { label: "تم الشحن", tone: "success" },
-  DELIVERED: { label: "تم التسليم", tone: "success" },
-  CANCELLED: { label: "ملغاة", tone: "neutral" },
+type StatusLabels = Dictionary["orders"]["status"];
+type StepLabels = Dictionary["orders"]["steps"];
+
+const TONES: Record<string, "neutral" | "info" | "success" | "warning" | "danger"> = {
+  PENDING_PAYMENT: "warning",
+  PAID: "info",
+  SOURCING: "info",
+  SOURCED: "info",
+  SOURCING_FAILED: "danger",
+  SHIPPED: "success",
+  DELIVERED: "success",
+  CANCELLED: "neutral",
 };
 
-export function OrderStatusBadge({ status }: { status: string }) {
-  const s = STATUS_MAP[status] ?? { label: status, tone: "neutral" as const };
-  return <Badge tone={s.tone}>{s.label}</Badge>;
+export function OrderStatusBadge({
+  status,
+  labels,
+}: {
+  status: string;
+  labels: StatusLabels;
+}) {
+  const label = labels[status as keyof StatusLabels] ?? status;
+  return <Badge tone={TONES[status] ?? "neutral"}>{label}</Badge>;
 }
 
-export function orderStatusLabel(status: string): string {
-  return STATUS_MAP[status]?.label ?? status;
+export function orderStatusLabel(status: string, labels: StatusLabels): string {
+  return labels[status as keyof StatusLabels] ?? status;
 }
 
-/** خطوات تقدّم الطلبية المعروضة للعميل. */
-const STEPS = [
-  { key: "PAID", label: "تأكيد الطلب" },
-  { key: "SOURCED", label: "التجهيز" },
-  { key: "SHIPPED", label: "الشحن" },
-  { key: "DELIVERED", label: "التسليم" },
-] as const;
-
+/** ترتيب خطوات تقدّم الطلبية المعروضة للعميل. */
 const ORDER_RANK: Record<string, number> = {
   PENDING_PAYMENT: 0,
   PAID: 1,
@@ -43,16 +42,29 @@ const ORDER_RANK: Record<string, number> = {
   CANCELLED: 0,
 };
 
-export function OrderProgress({ status }: { status: string }) {
+export function OrderProgress({
+  status,
+  labels,
+}: {
+  status: string;
+  labels: StepLabels;
+}) {
   const rank = ORDER_RANK[status] ?? 0;
   if (status === "CANCELLED") return null;
 
+  const steps = [
+    labels.confirm,
+    labels.preparing,
+    labels.shipping,
+    labels.delivered,
+  ];
+
   return (
     <ol className="flex items-center">
-      {STEPS.map((step, i) => {
+      {steps.map((label, i) => {
         const done = rank >= i + 1;
         return (
-          <li key={step.key} className="flex flex-1 items-center last:flex-none">
+          <li key={label} className="flex flex-1 items-center last:flex-none">
             <div className="flex flex-col items-center gap-1.5">
               <span
                 className={
@@ -70,10 +82,10 @@ export function OrderProgress({ status }: { status: string }) {
                   (done ? "font-medium" : "text-ink-500")
                 }
               >
-                {step.label}
+                {label}
               </span>
             </div>
-            {i < STEPS.length - 1 && (
+            {i < steps.length - 1 && (
               <span
                 className={
                   "mx-1 mb-5 h-0.5 flex-1 " +

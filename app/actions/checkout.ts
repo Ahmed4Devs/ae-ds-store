@@ -7,6 +7,7 @@ import { readCart, clearCart } from "@/lib/cart";
 import { shippingAddressSchema } from "@/lib/ksa";
 import { createLocalOrder, markOrderPaid, sourceOrderFromAliExpress } from "@/lib/orders";
 import { getCurrentUser } from "@/lib/session";
+import { getDictionary, getLocale } from "@/lib/i18n";
 
 /**
  * إجراء إتمام الشراء.
@@ -29,9 +30,14 @@ export async function checkoutAction(
   _prev: CheckoutState,
   formData: FormData,
 ): Promise<CheckoutState> {
-  const cart = await readCart();
+  const [cart, t, locale] = await Promise.all([
+    readCart(),
+    getDictionary(),
+    getLocale(),
+  ]);
+
   if (cart.length === 0) {
-    return { formError: "سلتك فارغة" };
+    return { formError: t.checkout.cartEmpty };
   }
 
   const parsed = shippingAddressSchema.safeParse({
@@ -85,6 +91,7 @@ export async function checkoutAction(
     const created = await createLocalOrder({
       cart,
       address,
+      locale,
       userId: user?.id,
       addressId,
       notes: (formData.get("notes") as string) || undefined,
@@ -93,8 +100,7 @@ export async function checkoutAction(
     orderNumber = created.orderNumber;
   } catch (e) {
     return {
-      formError:
-        e instanceof Error ? e.message : "تعذّر إنشاء الطلبية. حاول مجددًا.",
+      formError: e instanceof Error ? e.message : t.checkout.createFailed,
     };
   }
 

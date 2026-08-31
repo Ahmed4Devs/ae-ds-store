@@ -7,13 +7,18 @@ import { prisma } from "@/lib/db";
 import { formatSar } from "@/lib/pricing";
 import { formatDateAr, formatSaudiPhone } from "@/lib/ksa";
 import type { ShippingAddress } from "@/lib/ksa";
+import { fill, getDictionary, getLocale } from "@/lib/i18n";
 
-export const metadata = { title: "تفاصيل الطلبية · الإدارة" };
+export async function generateMetadata() {
+  const t = await getDictionary();
+  return { title: t.orders.detailTitle };
+}
 
 export default async function AdminOrderPage(
   props: PageProps<"/admin/orders/[orderNumber]">,
 ) {
   const { orderNumber } = await props.params;
+  const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
 
   const order = await prisma.order.findUnique({
     where: { orderNumber },
@@ -43,27 +48,25 @@ export default async function AdminOrderPage(
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <div>
           <Link href="/admin/orders" className="text-sm text-ink-500 hover:text-brand-600">
-            ← الطلبيات
+            {t.admin.orders}
           </Link>
           <h1 className="mt-1 text-2xl font-bold nums" dir="ltr">
             {order.orderNumber}
           </h1>
-          <p className="mt-1 text-sm text-ink-500">{formatDateAr(order.createdAt)}</p>
+          <p className="mt-1 text-sm text-ink-500">{formatDateAr(order.createdAt, locale)}</p>
         </div>
         <div className="flex items-center gap-3">
-          <OrderStatusBadge status={order.status} />
+          <OrderStatusBadge status={order.status} labels={t.orders.status} />
           {order.status === "SOURCING_FAILED" && (
-            <RetrySourcingButton orderId={order.id} />
+            <RetrySourcingButton orderId={order.id} labels={{ retry: t.admin.retrySourcing, retrying: t.admin.retrying }} />
           )}
         </div>
       </div>
 
       {order.status === "SOURCING_FAILED" && (
         <div className="mb-6">
-          <Alert tone="danger" title="فشل التوريد من AliExpress">
-            راجع سجل الاستدعاءات أسفل الصفحة لمعرفة رمز الخطأ. أعد المحاولة فقط
-            إن كان الخطأ قابلًا لذلك — الأخطاء من فئة A001–A006 تتطلّب التواصل
-            مع الدعم الفني لدى المنصة.
+          <Alert tone="danger" title={t.admin.sourcingFailedTitle}>
+            {t.admin.sourcingFailedBody}
           </Alert>
         </div>
       )}
@@ -73,7 +76,7 @@ export default async function AdminOrderPage(
           {/* المنتجات */}
           <Card className="overflow-hidden">
             <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
-              المنتجات
+              {t.orders.products}
             </p>
             <ul className="divide-y divide-[--color-border-app]">
               {order.items.map((it) => (
@@ -89,11 +92,11 @@ export default async function AdminOrderPage(
                       <p className="line-clamp-2">{it.titleSnapshot}</p>
                       <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs text-ink-500 sm:grid-cols-2">
                         <div className="flex gap-2">
-                          <dt>معرّف المنتج:</dt>
+                          <dt>{t.admin.productId}:</dt>
                           <dd className="nums" dir="ltr">{it.aeProductId}</dd>
                         </div>
                         <div className="flex gap-2">
-                          <dt>الكمية:</dt>
+                          <dt>{t.orders.quantityLabel}:</dt>
                           <dd className="nums">{it.quantity}</dd>
                         </div>
                         <div className="flex gap-2 sm:col-span-2">
@@ -103,14 +106,14 @@ export default async function AdminOrderPage(
                           </dd>
                         </div>
                         <div className="flex gap-2 sm:col-span-2">
-                          <dt className="shrink-0">خدمة الشحن:</dt>
+                          <dt className="shrink-0">{t.admin.shippingService}:</dt>
                           <dd className="font-mono" dir="ltr">{it.logisticsServiceName}</dd>
                         </div>
                       </dl>
                     </div>
                     <div className="shrink-0 text-left text-sm">
                       <p className="font-semibold nums">
-                        {formatSar(Number(it.unitPriceSar) * it.quantity)}
+                        {formatSar(Number(it.unitPriceSar) * it.quantity, locale)}
                       </p>
                       <p className="mt-0.5 text-xs text-ink-500 nums" dir="ltr">
                         ${Number(it.unitCostSource).toFixed(2)} × {it.quantity}
@@ -125,13 +128,13 @@ export default async function AdminOrderPage(
           {/* طلبيات AliExpress */}
           <Card className="overflow-hidden">
             <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
-              طلبيات AliExpress
-              <span className="mr-2 text-xs font-normal text-ink-500">
-                (طلبية واحدة لدينا قد تنقسم على عدة بائعين)
+              {t.admin.aeOrders}
+              <span className="ms-2 text-xs font-normal text-ink-500">
+                {t.admin.aeOrdersNote}
               </span>
             </p>
             {order.aeOrders.length === 0 ? (
-              <p className="p-5 text-sm text-ink-500">لم تُصدَّر بعد.</p>
+              <p className="p-5 text-sm text-ink-500">{t.admin.notSourced}</p>
             ) : (
               <ul className="divide-y divide-[--color-border-app]">
                 {order.aeOrders.map((ae) => (
@@ -146,20 +149,20 @@ export default async function AdminOrderPage(
                       )}
                       {ae.payTimeoutSecond != null && ae.payTimeoutSecond > 0 && (
                         <Badge tone="warning">
-                          مهلة الدفع: {Math.floor(ae.payTimeoutSecond / 60)} دقيقة
+                          {fill(t.admin.payTimeout, { n: Math.floor(ae.payTimeoutSecond / 60) })}
                         </Badge>
                       )}
                     </div>
                     {ae.lastPolledAt && (
                       <p className="mt-2 text-xs text-ink-500">
-                        آخر استقصاء: {formatDateAr(ae.lastPolledAt)}
+                        {fill(t.admin.lastPolled, { date: formatDateAr(ae.lastPolledAt, locale) })}
                       </p>
                     )}
                     {ae.packages.length > 0 && (
                       <ul className="mt-2 space-y-1">
                         {ae.packages.map((p) => (
                           <li key={p.id} className="text-xs text-ink-500">
-                            تتبع:{" "}
+                            {t.admin.trackingLabel}:{" "}
                             <code className="nums" dir="ltr">{p.mailNo}</code>
                             {p.carrierName && ` · ${p.carrierName}`}
                           </li>
@@ -175,16 +178,16 @@ export default async function AdminOrderPage(
           {/* سجل الاستدعاءات */}
           <Card className="overflow-hidden">
             <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
-              سجل استدعاءات الواجهات
+              {t.admin.apiCallLog}
             </p>
             {logs.length === 0 ? (
-              <p className="p-5 text-sm text-ink-500">لا توجد سجلات.</p>
+              <p className="p-5 text-sm text-ink-500">{t.admin.noLogs}</p>
             ) : (
               <ul className="divide-y divide-[--color-border-app] text-sm">
                 {logs.map((l) => (
                   <li key={l.id} className="flex flex-wrap items-center gap-3 p-3">
                     <Badge tone={l.success ? "success" : "danger"}>
-                      {l.success ? "نجح" : "فشل"}
+                      {l.success ? t.admin.succeeded : t.admin.failed}
                     </Badge>
                     <code className="font-mono text-xs" dir="ltr">{l.apiName}</code>
                     {l.errorCode && (
@@ -193,10 +196,10 @@ export default async function AdminOrderPage(
                       </code>
                     )}
                     {l.retryable === false && !l.success && (
-                      <Badge tone="danger">غير قابل لإعادة المحاولة</Badge>
+                      <Badge tone="danger">{t.admin.notRetryableBadge}</Badge>
                     )}
                     <span className="mr-auto text-xs text-ink-500 nums">
-                      {l.durationMs} م.ث · {formatDateAr(l.createdAt)}
+                      {l.durationMs} {t.admin.ms} · {formatDateAr(l.createdAt, locale)}
                     </span>
                   </li>
                 ))}
@@ -208,10 +211,10 @@ export default async function AdminOrderPage(
         {/* الجانب */}
         <div className="space-y-6">
           <Card className="p-5">
-            <p className="mb-3 font-semibold">الربحية</p>
+            <p className="mb-3 font-semibold">{t.admin.profitability}</p>
             <dl className="space-y-2 text-sm">
-              <Row label="الإيراد" value={formatSar(Number(order.totalSar))} />
-              <Row label="التكلفة" value={formatSar(costSar)} muted />
+              <Row label={t.admin.revenueLabel} value={formatSar(Number(order.totalSar), locale)} />
+              <Row label={t.admin.costLabel} value={formatSar(costSar, locale)} muted />
               <Row
                 label="الهامش"
                 value={formatSar(margin)}
@@ -219,12 +222,12 @@ export default async function AdminOrderPage(
               />
               <div className="border-t border-[--color-border-app] pt-2">
                 <Row
-                  label="سعر الصرف المثبَّت"
+                  label={t.admin.fxLocked}
                   value={Number(order.fxRateUsed).toFixed(4)}
                   muted
                 />
                 <Row
-                  label="التكلفة بالمصدر"
+                  label={t.admin.costSource}
                   value={`$${(Number(order.costSubtotal) + Number(order.costShipping)).toFixed(2)}`}
                   muted
                 />
@@ -233,19 +236,19 @@ export default async function AdminOrderPage(
           </Card>
 
           <Card className="p-5">
-            <p className="mb-3 font-semibold">العميل</p>
+            <p className="mb-3 font-semibold">{t.admin.customer}</p>
             {order.user ? (
               <div className="text-sm">
                 <p>{order.user.name}</p>
                 <p className="text-ink-500" dir="ltr">{order.user.email}</p>
               </div>
             ) : (
-              <p className="text-sm text-ink-500">زائر (بلا حساب)</p>
+              <p className="text-sm text-ink-500">{t.admin.guest}</p>
             )}
           </Card>
 
           <Card className="p-5">
-            <p className="mb-3 font-semibold">عنوان الشحن</p>
+            <p className="mb-3 font-semibold">{t.checkout.shippingAddress}</p>
             <address className="space-y-1 text-sm not-italic leading-relaxed text-ink-600 dark:text-ink-300">
               <p className="font-medium text-[--color-foreground]">{addr.fullName}</p>
               <p dir="ltr" className="text-right nums">{formatSaudiPhone(addr.phone)}</p>
@@ -257,7 +260,7 @@ export default async function AdminOrderPage(
               </p>
               {addr.nationalAddress && (
                 <p className="text-xs">
-                  العنوان الوطني:{" "}
+                  {t.account.nationalAddressLabel}:{" "}
                   <code className="nums" dir="ltr">{addr.nationalAddress}</code>
                 </p>
               )}
@@ -265,13 +268,12 @@ export default async function AdminOrderPage(
           </Card>
 
           <Card className="p-5">
-            <p className="mb-2 font-semibold">مفتاح منع التكرار</p>
+            <p className="mb-2 font-semibold">{t.admin.idempotencyKey}</p>
             <code className="block break-all rounded bg-[--color-background] p-2 font-mono text-xs" dir="ltr">
               {order.outOrderId}
             </code>
             <p className="mt-2 text-xs leading-relaxed text-ink-500">
-              يُرسَل في الحقل out_order_id، وإعادة الإرسال به تُرفض بـ
-              REPEATED_ORDER_ERROR بدل الشراء مرتين.
+              {t.admin.idempotencyNote}
             </p>
           </Card>
         </div>

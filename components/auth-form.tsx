@@ -5,19 +5,28 @@ import { useRouter } from "next/navigation";
 import { z } from "zod";
 import { authClient } from "@/lib/auth-client";
 import { Button, Field, Input } from "@/components/ui";
+import type { Dictionary } from "@/lib/i18n/shared";
 
-const signinSchema = z.object({
-  email: z.email("البريد الإلكتروني غير صالح"),
-  password: z.string().min(1, "كلمة المرور مطلوبة"),
-});
+type Labels = Dictionary["auth"];
 
-const signupSchema = z.object({
-  name: z.string().trim().min(2, "الاسم مطلوب"),
-  email: z.email("البريد الإلكتروني غير صالح"),
-  password: z.string().min(8, "كلمة المرور ثمانية أحرف على الأقل"),
-});
+export function AuthForm({
+  mode,
+  labels,
+}: {
+  mode: "signin" | "signup";
+  labels: Labels;
+}) {
+  const signinSchema = z.object({
+    email: z.email(labels.invalidEmail),
+    password: z.string().min(1, labels.passwordRequired),
+  });
 
-export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
+  const signupSchema = z.object({
+    name: z.string().trim().min(2, labels.nameRequired),
+    email: z.email(labels.invalidEmail),
+    password: z.string().min(8, labels.passwordTooShort),
+  });
+
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -62,9 +71,7 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
 
       if (res.error) {
         setFormError(
-          mode === "signup"
-            ? "تعذّر إنشاء الحساب. قد يكون البريد مستخدمًا مسبقًا."
-            : "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
+          mode === "signup" ? labels.signUpFailed : labels.signInFailed,
         );
         return;
       }
@@ -77,33 +84,31 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       {mode === "signup" && (
-        <Field label="الاسم" required error={errors.name}>
-          <Input name="name" autoComplete="name" placeholder="اسمك الكامل" />
+        <Field label={labels.name} required error={errors.name}>
+          <Input name="name" autoComplete="name" placeholder={labels.namePlaceholder} />
         </Field>
       )}
 
-      <Field label="البريد الإلكتروني" required error={errors.email}>
+      <Field label={labels.email} required error={errors.email}>
         <Input
           name="email"
           type="email"
           dir="ltr"
-          className="text-right"
           autoComplete="email"
           placeholder="you@example.com"
         />
       </Field>
 
       <Field
-        label="كلمة المرور"
+        label={labels.password}
         required
         error={errors.password}
-        hint={mode === "signup" ? "ثمانية أحرف على الأقل" : undefined}
+        hint={mode === "signup" ? labels.passwordHint : undefined}
       >
         <Input
           name="password"
           type="password"
           dir="ltr"
-          className="text-right"
           autoComplete={mode === "signup" ? "new-password" : "current-password"}
         />
       </Field>
@@ -116,10 +121,10 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
 
       <Button type="submit" size="lg" className="w-full" disabled={pending}>
         {pending
-          ? "جارٍ المعالجة…"
+          ? labels.processing
           : mode === "signup"
-            ? "إنشاء الحساب"
-            : "تسجيل الدخول"}
+            ? labels.signUp
+            : labels.signIn}
       </Button>
     </form>
   );

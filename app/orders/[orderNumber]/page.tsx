@@ -8,8 +8,12 @@ import { syncOrderIfStale } from "@/lib/order-sync";
 import { formatSar } from "@/lib/pricing";
 import { formatDateAr, formatSaudiPhone } from "@/lib/ksa";
 import type { ShippingAddress } from "@/lib/ksa";
+import { fill, getDictionary, getLocale } from "@/lib/i18n";
 
-export const metadata = { title: "تفاصيل الطلب" };
+export async function generateMetadata() {
+  const t = await getDictionary();
+  return { title: t.orders.detailTitle };
+}
 
 interface TrackingNodeJson {
   title: string;
@@ -24,7 +28,11 @@ export default async function OrderDetailPage(
   const sp = await props.searchParams;
   const isNew = sp.new === "1";
 
-  const user = await getCurrentUser();
+  const [user, t, locale] = await Promise.all([
+    getCurrentUser(),
+    getDictionary(),
+    getLocale(),
+  ]);
 
   const order = await prisma.order.findUnique({
     where: { orderNumber },
@@ -58,8 +66,8 @@ export default async function OrderDetailPage(
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-8">
         {isNew && (
           <div className="mb-6">
-            <Alert tone="success" title="تم استلام طلبك">
-              شكرًا لك. سنبدأ التجهيز فورًا وستصلك تحديثات التتبع هنا.
+            <Alert tone="success" title={t.orders.newOrderTitle}>
+              {t.orders.newOrderBody}
             </Alert>
           </div>
         )}
@@ -70,36 +78,35 @@ export default async function OrderDetailPage(
               {o.orderNumber}
             </h1>
             <p className="mt-1 text-sm text-ink-500">
-              {formatDateAr(o.createdAt)}
+              {formatDateAr(o.createdAt, locale)}
             </p>
           </div>
-          <OrderStatusBadge status={o.status} />
+          <OrderStatusBadge status={o.status} labels={t.orders.status} />
         </div>
 
         {o.status === "SOURCING_FAILED" && (
           <div className="mb-6">
-            <Alert tone="warning" title="طلبك قيد المراجعة">
-              واجهنا مشكلة أثناء تجهيز طلبك لدى المورّد. فريقنا يراجعها الآن
-              وسيتواصل معك. لم يُخصم منك مبلغ إضافي.
+            <Alert tone="warning" title={t.orders.failedTitle}>
+              {t.orders.failedBody}
             </Alert>
           </div>
         )}
 
         <Card className="mb-6 p-6">
-          <OrderProgress status={o.status} />
+          <OrderProgress status={o.status} labels={t.orders.steps} />
         </Card>
 
         {/* التتبع */}
         {allPackages.length > 0 && (
           <Card className="mb-6 p-5">
-            <p className="mb-4 font-semibold">تتبّع الشحنة</p>
+            <p className="mb-4 font-semibold">{t.orders.tracking}</p>
             <div className="space-y-6">
               {allPackages.map((pkg) => {
                 const nodes = (pkg.nodes as unknown as TrackingNodeJson[]) ?? [];
                 return (
                   <div key={pkg.id}>
                     <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
-                      <span className="text-ink-500">رقم التتبع</span>
+                      <span className="text-ink-500">{t.orders.trackingNumber}</span>
                       <code
                         className="rounded bg-[--color-background] px-2 py-1 font-mono text-xs nums"
                         dir="ltr"
@@ -113,14 +120,14 @@ export default async function OrderDetailPage(
                           rel="noreferrer noopener"
                           className="text-xs text-brand-600 hover:underline"
                         >
-                          تتبّع لدى {pkg.cpName ?? pkg.carrierName ?? "الناقل"} ↗
+                          {fill(t.orders.trackAt, { carrier: pkg.cpName ?? pkg.carrierName ?? "—" })} ↗
                         </a>
                       )}
                     </div>
 
                     {pkg.etaAt && (
                       <p className="mb-3 text-xs text-ink-500">
-                        الوصول المتوقّع: {formatDateAr(pkg.etaAt)}
+                        {fill(t.orders.eta, { date: formatDateAr(pkg.etaAt, locale) })}
                       </p>
                     )}
 
@@ -140,7 +147,7 @@ export default async function OrderDetailPage(
                             </p>
                           )}
                           <p className="mt-1 text-xs text-ink-400">
-                            {formatDateAr(n.at)}
+                            {formatDateAr(n.at, locale)}
                           </p>
                         </li>
                       ))}
@@ -154,9 +161,8 @@ export default async function OrderDetailPage(
 
         {allPackages.length === 0 && o.status !== "PENDING_PAYMENT" && (
           <div className="mb-6">
-            <Alert tone="info" title="لم تُشحن بعد">
-              بيانات التتبع تظهر بعد أن يسلّم المورّد الشحنة إلى الناقل. عادةً
-              خلال أيام قليلة من تأكيد الطلب.
+            <Alert tone="info" title={t.orders.notShippedTitle}>
+              {t.orders.notShippedBody}
             </Alert>
           </div>
         )}
@@ -164,7 +170,7 @@ export default async function OrderDetailPage(
         {/* المنتجات */}
         <Card className="mb-6 overflow-hidden">
           <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
-            المنتجات
+            {t.orders.products}
           </p>
           <ul className="divide-y divide-[--color-border-app]">
             {o.items.map((it) => (
@@ -182,7 +188,7 @@ export default async function OrderDetailPage(
                 <div className="min-w-0 flex-1">
                   <p className="line-clamp-2 text-sm">{it.titleSnapshot}</p>
                   <p className="mt-1 text-xs text-ink-500 nums">
-                    {it.variantLabel} · الكمية {it.quantity}
+                    {it.variantLabel} · {t.orders.quantityLabel} {it.quantity}
                   </p>
                   {it.shippingCompany && (
                     <p className="mt-0.5 text-xs text-ink-500">
@@ -194,7 +200,7 @@ export default async function OrderDetailPage(
                   )}
                 </div>
                 <p className="shrink-0 text-sm font-semibold nums">
-                  {formatSar(Number(it.unitPriceSar) * it.quantity)}
+                  {formatSar(Number(it.unitPriceSar) * it.quantity, locale)}
                 </p>
               </li>
             ))}
@@ -204,7 +210,7 @@ export default async function OrderDetailPage(
         <div className="grid gap-6 sm:grid-cols-2">
           {/* العنوان */}
           <Card className="p-5">
-            <p className="mb-3 font-semibold">عنوان الشحن</p>
+            <p className="mb-3 font-semibold">{t.checkout.shippingAddress}</p>
             <address className="space-y-1 text-sm not-italic leading-relaxed text-ink-600 dark:text-ink-300">
               <p className="font-medium text-[--color-foreground]">{addr.fullName}</p>
               <p dir="ltr" className="text-right nums">
@@ -218,7 +224,7 @@ export default async function OrderDetailPage(
               </p>
               {addr.nationalAddress && (
                 <p className="text-xs text-ink-500">
-                  العنوان الوطني: <span className="nums">{addr.nationalAddress}</span>
+                  {t.account.nationalAddressLabel}: <span className="nums">{addr.nationalAddress}</span>
                 </p>
               )}
             </address>
@@ -226,23 +232,23 @@ export default async function OrderDetailPage(
 
           {/* المبالغ */}
           <Card className="p-5">
-            <p className="mb-3 font-semibold">ملخّص المبالغ</p>
+            <p className="mb-3 font-semibold">{t.orders.amountSummary}</p>
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
-                <dt className="text-ink-500">المجموع الفرعي</dt>
-                <dd className="nums">{formatSar(Number(o.subtotalSar))}</dd>
+                <dt className="text-ink-500">{t.cart.subtotal}</dt>
+                <dd className="nums">{formatSar(Number(o.subtotalSar), locale)}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-ink-500">الشحن</dt>
-                <dd className="nums">{formatSar(Number(o.shippingSar))}</dd>
+                <dt className="text-ink-500">{t.cart.shipping}</dt>
+                <dd className="nums">{formatSar(Number(o.shippingSar), locale)}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-ink-500">ضريبة القيمة المضافة</dt>
-                <dd className="nums">{formatSar(Number(o.vatSar))}</dd>
+                <dt className="text-ink-500">{t.cart.vat}</dt>
+                <dd className="nums">{formatSar(Number(o.vatSar), locale)}</dd>
               </div>
               <div className="flex justify-between border-t border-[--color-border-app] pt-2 font-bold">
-                <dt>الإجمالي</dt>
-                <dd className="nums">{formatSar(Number(o.totalSar))}</dd>
+                <dt>{t.cart.total}</dt>
+                <dd className="nums">{formatSar(Number(o.totalSar), locale)}</dd>
               </div>
             </dl>
           </Card>

@@ -2,6 +2,29 @@ import { getProduct, getShippingOptions, AeApiError } from "@/lib/aliexpress";
 import { calculateTotals, formatSar, retailUnitPriceSar, toSar } from "@/lib/pricing";
 import { deliveryEstimateAr } from "@/lib/ksa";
 import type { Cart } from "@/lib/cart";
+import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/shared";
+
+/** رسائل مشكلات الأسطر — تُعرض للعميل مباشرةً فتلزم ترجمتها. */
+const ISSUES = {
+  ar: {
+    variantGone: "لم يعد هذا الخيار متاحًا",
+    shippingGone:
+      "لم تعد طريقة الشحن المختارة متاحة — يُرجى إعادة اختيارها",
+    outOfStock: "نفدت الكمية",
+    onlyN: (n: number) => `المتوفّر ${n} فقط`,
+    unavailable: "منتج غير متاح",
+    refreshFailed: "تعذّر تحديث بيانات هذا المنتج",
+  },
+  en: {
+    variantGone: "This option is no longer available",
+    shippingGone:
+      "The selected shipping method is no longer available — please choose again",
+    outOfStock: "Out of stock",
+    onlyN: (n: number) => `Only ${n} left`,
+    unavailable: "Product unavailable",
+    refreshFailed: "Could not refresh this product",
+  },
+} as const;
 
 /**
  * تجميع السلة بأسعار وشحن **محدَّثين من المصدر**.
@@ -54,7 +77,13 @@ export interface CartSummary {
   hasUntracked: boolean;
 }
 
-export async function buildCartSummary(cart: Cart): Promise<CartSummary> {
+export async function buildCartSummary(
+  cart: Cart,
+  localeArg?: Locale,
+): Promise<CartSummary> {
+  // لا تُقرأ الكوكيز هنا: الدالة تُستدعى أيضًا من سياقات بلا طلب
+  const locale = localeArg ?? DEFAULT_LOCALE;
+  const msg = ISSUES[locale];
   const lines: CartLine[] = [];
 
   for (const item of cart) {
@@ -73,13 +102,13 @@ export async function buildCartSummary(cart: Cart): Promise<CartSummary> {
       const ship = shipping.find((s) => s.code === item.logisticsServiceName);
 
       if (!sku) {
-        line = brokenLine(item, product.title, "لم يعد هذا الخيار متاحًا");
+        line = brokenLine(item, product.title, msg.variantGone);
       } else if (!ship) {
         // خط الشحن اختفى — يجب على العميل إعادة الاختيار
         line = brokenLine(
           item,
           product.title,
-          "لم تعد طريقة الشحن المختارة متاحة — يُرجى إعادة اختيارها",
+          msg.shippingGone,
           product.imageUrls[0],
           sku.variantLabel,
         );
@@ -88,9 +117,9 @@ export async function buildCartSummary(cart: Cart): Promise<CartSummary> {
         const shippingSar = toSar(ship.feeSource);
         const issue =
           sku.stock === 0
-            ? "نفدت الكمية"
+            ? msg.outOfStock
             : sku.stock < item.quantity
-              ? `المتوفّر ${sku.stock} فقط`
+              ? msg.onlyN(sku.stock)
               : null;
 
         line = {
@@ -108,7 +137,7 @@ export async function buildCartSummary(cart: Cart): Promise<CartSummary> {
           shippingSar,
           shippingIncludesVat: ship.includesVat,
           shippingCompany: ship.company,
-          shippingEstimate: deliveryEstimateAr(ship.minDays, ship.maxDays),
+          shippingEstimate: deliveryEstimateAr(ship.minDays, ship.maxDays, locale),
           hasTracking: ship.hasTracking,
           minDeliveryDays: ship.minDays,
           maxDeliveryDays: ship.maxDays,
@@ -117,11 +146,11 @@ export async function buildCartSummary(cart: Cart): Promise<CartSummary> {
         };
       }
     } catch (e) {
-      const msg =
+      const reason =
         e instanceof AeApiError
           ? e.customerMessage
-          : "تعذّر تحديث بيانات هذا المنتج";
-      line = brokenLine(item, "منتج غير متاح", msg);
+          : msg.refreshFailed;
+      line = brokenLine(item, msg.unavailable, reason);
     }
 
     lines.push(line);

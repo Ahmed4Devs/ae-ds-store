@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui";
 
-export function SignOutButton() {
+export function SignOutButton({ label }: { label: string }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -22,7 +22,7 @@ export function SignOutButton() {
         })
       }
     >
-      {pending ? "…" : "تسجيل الخروج"}
+      {pending ? "…" : label}
     </Button>
   );
 }

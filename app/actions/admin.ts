@@ -5,6 +5,7 @@ import { z } from "zod";
 import { isAdmin } from "@/lib/session";
 import { sourceOrderFromAliExpress } from "@/lib/orders";
 import { syncActiveOrders } from "@/lib/order-sync";
+import { fill, getDictionary } from "@/lib/i18n";
 
 /**
  * إجراءات الإدارة.
@@ -23,13 +24,15 @@ export type AdminActionResult =
 export async function retrySourcingAction(
   input: z.input<typeof orderIdSchema>,
 ): Promise<AdminActionResult> {
+  const t = await getDictionary();
+
   if (!(await isAdmin())) {
-    return { ok: false, message: "غير مصرّح" };
+    return { ok: false, message: t.admin.unauthorized };
   }
 
   const parsed = orderIdSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, message: "بيانات غير صالحة" };
+    return { ok: false, message: t.admin.invalidData };
   }
 
   const result = await sourceOrderFromAliExpress(parsed.data.orderId, {
@@ -41,30 +44,34 @@ export async function retrySourcingAction(
   if (result.ok) {
     return {
       ok: true,
-      message: `تم التوريد بنجاح (${result.aeOrderIds.length} طلبية لدى AliExpress)`,
+      message: fill(t.admin.sourcedOk, { n: result.aeOrderIds.length }),
     };
   }
 
   return {
     ok: false,
     message: `${result.errorCode}: ${result.message}${
-      result.retryable ? "" : " — هذا الخطأ لا يُعاد آليًا"
+      result.retryable ? "" : t.admin.notRetriedAuto
     }`,
   };
 }
 
 export async function syncOrdersAction(): Promise<AdminActionResult> {
+  const t = await getDictionary();
+
   if (!(await isAdmin())) {
-    return { ok: false, message: "غير مصرّح" };
+    return { ok: false, message: t.admin.unauthorized };
   }
 
   const res = await syncActiveOrders(50);
   revalidatePath("/admin/orders");
 
-  return {
-    ok: true,
-    message: `تم استقصاء ${res.polled} طلبية، وتحدّثت ${res.updated}${
-      res.errors.length > 0 ? `، وفشل ${res.errors.length}` : ""
-    }`,
-  };
+  const base = fill(t.admin.syncResult, {
+    polled: res.polled,
+    updated: res.updated,
+  });
+  const suffix =
+    res.errors.length > 0 ? fill(t.admin.syncFailed, { n: res.errors.length }) : "";
+
+  return { ok: true, message: base + suffix };
 }

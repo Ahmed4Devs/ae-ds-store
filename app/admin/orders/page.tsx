@@ -4,8 +4,12 @@ import { OrderStatusBadge, orderStatusLabel } from "@/components/order-status";
 import { prisma } from "@/lib/db";
 import { formatSar } from "@/lib/pricing";
 import { formatDateAr } from "@/lib/ksa";
+import { getDictionary, getLocale } from "@/lib/i18n";
 
-export const metadata = { title: "الطلبيات · الإدارة" };
+export async function generateMetadata() {
+  const t = await getDictionary();
+  return { title: t.admin.orders };
+}
 
 const STATUSES = [
   "PENDING_PAYMENT",
@@ -31,6 +35,8 @@ export default async function AdminOrdersPage(
   const statusParam = typeof sp.status === "string" ? sp.status : "";
   const status = isStatus(statusParam) ? statusParam : undefined;
 
+  const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
+
   const orders = await prisma.order.findMany({
     where: status ? { status } : undefined,
     orderBy: { createdAt: "desc" },
@@ -50,7 +56,7 @@ export default async function AdminOrdersPage(
 
   return (
     <>
-      <h1 className="mb-6 text-2xl font-bold">الطلبيات</h1>
+      <h1 className="mb-6 text-2xl font-bold">{t.admin.orders}</h1>
 
       <div className="mb-5 flex flex-wrap gap-2">
         <Link
@@ -62,7 +68,7 @@ export default async function AdminOrdersPage(
               : "border-[--color-border-app] hover:border-brand-400")
           }
         >
-          الكل
+          {t.common.all}
         </Link>
         {STATUSES.map((s) => (
           <Link
@@ -75,27 +81,27 @@ export default async function AdminOrdersPage(
                 : "border-[--color-border-app] hover:border-brand-400")
             }
           >
-            {orderStatusLabel(s)}
+            {orderStatusLabel(s, t.orders.status)}
           </Link>
         ))}
       </div>
 
       {orders.length === 0 ? (
-        <EmptyState title="لا توجد طلبيات" description="لم تُسجَّل طلبيات بهذا الفلتر." />
+        <EmptyState title={t.admin.noOrders} description={t.admin.noOrdersFilter} />
       ) : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto scroll-thin">
             <table className="w-full text-sm">
               <thead className="bg-[--color-background] text-xs text-ink-500">
                 <tr>
-                  <th className="px-4 py-2.5 text-right font-medium">رقم الطلبية</th>
-                  <th className="px-4 py-2.5 text-right font-medium">التاريخ</th>
-                  <th className="px-4 py-2.5 text-right font-medium">منتجات</th>
-                  <th className="px-4 py-2.5 text-right font-medium">طلبيات علي</th>
-                  <th className="px-4 py-2.5 text-right font-medium">التكلفة</th>
-                  <th className="px-4 py-2.5 text-right font-medium">الإجمالي</th>
-                  <th className="px-4 py-2.5 text-right font-medium">الهامش</th>
-                  <th className="px-4 py-2.5 text-right font-medium">الحالة</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colOrderNumber}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colDate}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colProducts}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colAeOrders}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colCost}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colTotal}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colMargin}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colStatus}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[--color-border-app]">
@@ -116,15 +122,15 @@ export default async function AdminOrdersPage(
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-ink-500">
-                        {formatDateAr(o.createdAt)}
+                        {formatDateAr(o.createdAt, locale)}
                       </td>
                       <td className="px-4 py-3 nums">{o._count.items}</td>
                       <td className="px-4 py-3 nums">{o._count.aeOrders}</td>
                       <td className="px-4 py-3 text-ink-500 nums">
-                        {formatSar(costSar)}
+                        {formatSar(costSar, locale)}
                       </td>
                       <td className="px-4 py-3 font-medium nums">
-                        {formatSar(Number(o.totalSar))}
+                        {formatSar(Number(o.totalSar), locale)}
                       </td>
                       <td
                         className={
@@ -134,10 +140,10 @@ export default async function AdminOrdersPage(
                             : "text-red-600 dark:text-red-400")
                         }
                       >
-                        {formatSar(margin)}
+                        {formatSar(margin, locale)}
                       </td>
                       <td className="px-4 py-3">
-                        <OrderStatusBadge status={o.status} />
+                        <OrderStatusBadge status={o.status} labels={t.orders.status} />
                       </td>
                     </tr>
                   );

@@ -6,6 +6,7 @@ import { fetchAndMirrorProduct } from "@/lib/catalog";
 import { getShippingOptions, AeApiError } from "@/lib/aliexpress";
 import { retailUnitPriceSar, formatSar, toSar } from "@/lib/pricing";
 import { deliveryEstimateAr } from "@/lib/ksa";
+import { fill, getDictionary, getLocale } from "@/lib/i18n";
 
 export async function generateMetadata(props: PageProps<"/product/[id]">) {
   const { id } = await props.params;
@@ -13,12 +14,13 @@ export async function generateMetadata(props: PageProps<"/product/[id]">) {
     const p = await fetchAndMirrorProduct(id);
     return { title: p.title.slice(0, 70) };
   } catch {
-    return { title: "المنتج غير متاح" };
+    return { title: "—" };
   }
 }
 
 export default async function ProductPage(props: PageProps<"/product/[id]">) {
   const { id } = await props.params;
+  const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
 
   let product;
   try {
@@ -30,16 +32,12 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
 
   if (product.skus.length === 0) notFound();
 
-  // خيارات الشحن إلى السعودية — تُجلب لكمية واحدة كأساس للعرض
   let shipping: Awaited<ReturnType<typeof getShippingOptions>> = [];
   let shippingError: string | null = null;
   try {
     shipping = await getShippingOptions({ aeProductId: id, quantity: 1 });
   } catch (e) {
-    shippingError =
-      e instanceof AeApiError
-        ? e.customerMessage
-        : "تعذّر حساب الشحن حاليًا.";
+    shippingError = e instanceof AeApiError ? e.customerMessage : "—";
   }
 
   const cheapest = product.skus.reduce(
@@ -54,7 +52,6 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">
         <div className="grid gap-10 lg:grid-cols-2">
-          {/* الصور */}
           <div>
             <div className="overflow-hidden rounded-xl border border-[--color-border-app] bg-ink-100 dark:bg-ink-800">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -79,7 +76,6 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
             )}
           </div>
 
-          {/* التفاصيل */}
           <div>
             <h1 className="text-xl font-bold leading-relaxed sm:text-2xl">
               {product.title}
@@ -96,29 +92,29 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
               )}
               {product.ordersCount > 0 && (
                 <span className="nums">
-                  {product.ordersCount.toLocaleString("en")} طلب سابق
+                  {fill(t.product.ordersCount, {
+                    n: product.ordersCount.toLocaleString("en"),
+                  })}
                 </span>
               )}
             </div>
 
-            <p className="mt-5 text-3xl font-bold text-brand-700 dark:text-brand-400 nums">
-              {formatSar(retailUnitPriceSar(cheapest))}
+            <p className="nums mt-5 text-3xl font-bold text-brand-700 dark:text-brand-400">
+              {formatSar(retailUnitPriceSar(cheapest), locale)}
             </p>
-            <p className="mt-1 text-xs text-ink-500">
-              السعر شامل ضريبة القيمة المضافة · الشحن يُحتسب حسب الخيار المختار
-            </p>
+            <p className="mt-1 text-xs text-ink-500">{t.product.priceNote}</p>
 
             {!inStock && (
               <div className="mt-5">
-                <Alert tone="warning" title="غير متوفر حاليًا">
-                  نفدت الكمية من جميع الخيارات. تحقّق لاحقًا.
+                <Alert tone="warning" title={t.product.outOfStockTitle}>
+                  {t.product.outOfStockBody}
                 </Alert>
               </div>
             )}
 
             {shippingError && (
               <div className="mt-5">
-                <Alert tone="warning" title="تعذّر حساب الشحن">
+                <Alert tone="warning" title={t.product.shippingErrorTitle}>
                   {shippingError}
                 </Alert>
               </div>
@@ -128,6 +124,23 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
               <div className="mt-6">
                 <AddToCartForm
                   aeProductId={product.aeProductId}
+                  locale={locale}
+                  labels={{
+                    variant: t.product.variant,
+                    available: t.product.available,
+                    shippingMethod: t.product.shippingMethod,
+                    trackable: t.product.trackable,
+                    notTrackable: t.product.notTrackable,
+                    free: t.product.free,
+                    quantity: t.product.quantity,
+                    addToCart: t.product.addToCart,
+                    adding: t.product.adding,
+                    increase: t.product.increase,
+                    decrease: t.product.decrease,
+                    lineProduct: t.product.lineProduct,
+                    lineShipping: t.product.lineShipping,
+                    totalNote: t.product.totalNote,
+                  }}
                   skus={product.skus.map((s) => ({
                     skuAttr: s.skuAttr,
                     label: s.variantLabel,
@@ -140,17 +153,16 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
                     feeSar: toSar(o.feeSource),
                     isFree: o.isFree,
                     hasTracking: o.hasTracking,
-                    estimate: deliveryEstimateAr(o.minDays, o.maxDays),
+                    estimate: deliveryEstimateAr(o.minDays, o.maxDays, locale),
                   }))}
                 />
               </div>
             )}
 
-            {/* المواصفات */}
             {product.properties.length > 0 && (
               <Card className="mt-8 overflow-hidden">
                 <p className="border-b border-[--color-border-app] px-4 py-3 font-semibold">
-                  المواصفات
+                  {t.product.specs}
                 </p>
                 <dl className="divide-y divide-[--color-border-app]">
                   {product.properties.map((p, i) => (

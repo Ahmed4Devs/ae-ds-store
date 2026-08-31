@@ -3,12 +3,18 @@ import { Badge, Card, EmptyState } from "@/components/ui";
 import { SyncOrdersButton } from "@/components/retry-sourcing";
 import { prisma } from "@/lib/db";
 import { formatDateAr } from "@/lib/ksa";
+import { getDictionary, getLocale } from "@/lib/i18n";
 
-export const metadata = { title: "سجل الواجهات · الإدارة" };
+export async function generateMetadata() {
+  const t = await getDictionary();
+  return { title: t.admin.apiLog };
+}
 
 export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
   const sp = await props.searchParams;
   const onlyFailed = sp.failed === "1";
+
+  const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
 
   const [logs, stats] = await Promise.all([
     prisma.aeApiLog.findMany({
@@ -39,23 +45,23 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
   return (
     <>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold">سجل استدعاءات الواجهات</h1>
-        <SyncOrdersButton />
+        <h1 className="text-2xl font-bold">{t.admin.apiCallLog}</h1>
+        <SyncOrdersButton labels={{ sync: t.admin.syncNow, syncing: t.admin.syncing }} />
       </div>
 
       {perApi.size > 0 && (
         <Card className="mb-6 overflow-hidden">
           <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
-            ملخّص حسب الواجهة
+            {t.admin.perApiSummary}
           </p>
           <div className="overflow-x-auto scroll-thin">
             <table className="w-full text-sm">
               <thead className="bg-[--color-background] text-xs text-ink-500">
                 <tr>
-                  <th className="px-4 py-2.5 text-right font-medium">الواجهة</th>
-                  <th className="px-4 py-2.5 text-right font-medium">نجاح</th>
-                  <th className="px-4 py-2.5 text-right font-medium">فشل</th>
-                  <th className="px-4 py-2.5 text-right font-medium">متوسط الزمن</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colApi}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colSuccess}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colFail}</th>
+                  <th className="px-4 py-2.5 text-right font-medium">{t.admin.colAvgTime}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[--color-border-app]">
@@ -75,7 +81,7 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
                     >
                       {s.fail}
                     </td>
-                    <td className="px-4 py-2.5 text-ink-500 nums">{s.avgMs} م.ث</td>
+                    <td className="px-4 py-2.5 text-ink-500 nums">{s.avgMs} {t.admin.ms}</td>
                   </tr>
                 ))}
               </tbody>
@@ -94,7 +100,7 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
               : "border-[--color-border-app] hover:border-brand-400")
           }
         >
-          الكل
+          {t.common.all}
         </Link>
         <Link
           href="/admin/api-log?failed=1"
@@ -105,19 +111,19 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
               : "border-[--color-border-app] hover:border-brand-400")
           }
         >
-          الفاشلة فقط
+          {t.admin.onlyFailed}
         </Link>
       </div>
 
       {logs.length === 0 ? (
-        <EmptyState title="لا توجد سجلات" />
+        <EmptyState title={t.admin.noLogs} />
       ) : (
         <Card className="overflow-hidden">
           <ul className="divide-y divide-[--color-border-app] text-sm">
             {logs.map((l) => (
               <li key={l.id} className="flex flex-wrap items-center gap-3 p-3">
                 <Badge tone={l.success ? "success" : "danger"}>
-                  {l.success ? "نجح" : "فشل"}
+                  {l.success ? t.admin.succeeded : t.admin.failed}
                 </Badge>
                 <Badge tone={l.mode === "live" ? "info" : "neutral"}>{l.mode}</Badge>
                 <code className="font-mono text-xs" dir="ltr">{l.apiName}</code>
@@ -130,11 +136,11 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
                   </code>
                 )}
                 {l.retryable === false && !l.success && (
-                  <Badge tone="danger">لا يُعاد آليًا</Badge>
+                  <Badge tone="danger">{t.admin.notRetryableBadge}</Badge>
                 )}
-                {l.retryable === true && <Badge tone="warning">قابل لإعادة المحاولة</Badge>}
-                <span className="mr-auto shrink-0 text-xs text-ink-500 nums">
-                  {l.durationMs} م.ث · {formatDateAr(l.createdAt)}
+                {l.retryable === true && <Badge tone="warning">{t.admin.retryableBadge}</Badge>}
+                <span className="ms-auto shrink-0 text-xs text-ink-500 nums">
+                  {l.durationMs} {t.admin.ms} · {formatDateAr(l.createdAt, locale)}
                 </span>
               </li>
             ))}

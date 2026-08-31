@@ -1,13 +1,20 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   نظام التصميم — متجر عربي بتخطيط من اليمين إلى اليسار
+   نظام التصميم — يدعم العربية والإنجليزية والوضعين الفاتح والداكن
    ========================================================================== */
 
-@theme {
-  --font-sans: "IBM Plex Sans Arabic", "Segoe UI", system-ui, sans-serif;
+/**
+ * الوضع الداكن يُفعَّل بسمة data-theme على عنصر html، لا بـ prefers-color-scheme
+ * وحده. السبب: المستخدم يحتاج تجاوزًا يدويًا، والقيمة تُقرأ من كوكي على
+ * الخادم فيُرسم الوضع الصحيح من أول رسمة بلا وميض.
+ */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
-  /* لوحة الألوان — أخضر يميل إلى الطابع السعودي دون مبالغة */
+@theme {
+  --font-sans: var(--font-arabic), "Segoe UI", system-ui, sans-serif;
+
+  /* لوحة العلامة */
   --color-brand-50: #ecfdf5;
   --color-brand-100: #d1fae5;
   --color-brand-200: #a7f3d0;
@@ -31,20 +38,22 @@
   --color-ink-900: #0f172a;
 }
 
+/* الوضع الفاتح — القيم الافتراضية */
 :root {
   --background: #ffffff;
   --surface: #f8fafc;
   --foreground: #0f172a;
   --border: #e2e8f0;
+  color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0b1220;
-    --surface: #111a2e;
-    --foreground: #e8eefc;
-    --border: #24314d;
-  }
+/* الوضع الداكن الصريح */
+[data-theme="dark"] {
+  --background: #0b1220;
+  --surface: #111a2e;
+  --foreground: #e8eefc;
+  --border: #24314d;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -52,10 +61,6 @@
   --color-surface: var(--surface);
   --color-foreground: var(--foreground);
   --color-border-app: var(--border);
-}
-
-html {
-  color-scheme: light dark;
 }
 
 body {
@@ -69,12 +74,10 @@ body {
   font-feature-settings: "tnum";
 }
 
-/* شريط تمرير أنحف داخل الحاويات القابلة للتمرير */
 .scroll-thin {
   scrollbar-width: thin;
 }
 
-/* قصّ النص إلى سطرين — مستخدم في بطاقات المنتجات */
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -89,8 +92,16 @@ body {
   overflow: hidden;
 }
 
-/* تحسين مظهر التركيز لسهولة الوصول */
 :where(a, button, input, select, textarea):focus-visible {
   outline: 2px solid var(--color-brand-500);
   outline-offset: 2px;
+}
+
+/**
+ * تعديلات اتجاهية.
+ * الشارات العددية والأيقونات تحتاج قلبًا حسب اتجاه الصفحة، ويُنفَّذ
+ * بالخصائص المنطقية بدل الاعتماد على left/right الثابتتين.
+ */
+[dir="rtl"] .flip-x {
+  transform: scaleX(-1);
 }

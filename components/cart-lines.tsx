@@ -7,21 +7,48 @@ import { updateCartAction } from "@/app/actions/cart";
 import { Badge, Card, cx } from "@/components/ui";
 import { formatSar } from "@/lib/pricing";
 import type { CartLine } from "@/lib/cart-service";
+import type { Locale } from "@/lib/i18n/shared";
 
-export function CartLines({ lines }: { lines: CartLine[] }) {
+export interface CartLineLabels {
+  remove: string;
+  increase: string;
+  decrease: string;
+  notTrackable: string;
+  shippingSuffix: string;
+}
+
+export function CartLines({
+  lines,
+  labels,
+  locale = "ar",
+}: {
+  lines: CartLine[];
+  labels: CartLineLabels;
+  locale?: Locale;
+}) {
   return (
     <div className="space-y-3">
       {lines.map((line) => (
         <CartLineRow
           key={`${line.aeProductId}|${line.skuAttr}|${line.logisticsServiceName}`}
           line={line}
+          labels={labels}
+          locale={locale}
         />
       ))}
     </div>
   );
 }
 
-function CartLineRow({ line }: { line: CartLine }) {
+function CartLineRow({
+  line,
+  labels,
+  locale,
+}: {
+  line: CartLine;
+  labels: CartLineLabels;
+  locale: Locale;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -74,7 +101,7 @@ function CartLineRow({ line }: { line: CartLine }) {
             <span>
               {line.shippingCompany} · {line.shippingEstimate}
             </span>
-            {!line.hasTracking && <Badge tone="warning">بدون تتبع</Badge>}
+            {!line.hasTracking && <Badge tone="warning">{labels.notTrackable}</Badge>}
           </p>
         )}
 
@@ -88,7 +115,7 @@ function CartLineRow({ line }: { line: CartLine }) {
           <div className="flex items-center rounded-lg border border-[--color-border-app]">
             <button
               type="button"
-              aria-label="إنقاص"
+              aria-label={labels.decrease}
               disabled={pending}
               onClick={() => change(line.quantity - 1)}
               className="size-9 text-sm hover:bg-ink-100 dark:hover:bg-ink-800"
@@ -98,7 +125,7 @@ function CartLineRow({ line }: { line: CartLine }) {
             <span className="w-10 text-center text-sm nums">{line.quantity}</span>
             <button
               type="button"
-              aria-label="زيادة"
+              aria-label={labels.increase}
               disabled={pending || line.quantity >= maxQty}
               onClick={() => change(line.quantity + 1)}
               className="size-9 text-sm hover:bg-ink-100 disabled:opacity-30 dark:hover:bg-ink-800"
@@ -108,10 +135,10 @@ function CartLineRow({ line }: { line: CartLine }) {
           </div>
 
           <div className="text-left">
-            <p className="font-bold nums">{formatSar(line.linePriceSar)}</p>
+            <p className="font-bold nums">{formatSar(line.linePriceSar, locale)}</p>
             {line.shippingSar > 0 && (
               <p className="text-xs text-ink-500 nums">
-                + {formatSar(line.shippingSar)} شحن
+                + {formatSar(line.shippingSar, locale)} {labels.shippingSuffix}
               </p>
             )}
           </div>
@@ -122,7 +149,7 @@ function CartLineRow({ line }: { line: CartLine }) {
             onClick={() => change(0)}
             className="text-xs text-red-600 hover:underline dark:text-red-400"
           >
-            إزالة
+            {labels.remove}
           </button>
         </div>
       </div>

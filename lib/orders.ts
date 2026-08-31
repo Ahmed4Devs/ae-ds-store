@@ -5,6 +5,7 @@ import { AeApiError, placeOrder } from "@/lib/aliexpress";
 import { buildCartSummary } from "@/lib/cart-service";
 import type { Cart } from "@/lib/cart";
 import type { ShippingAddress } from "@/lib/ksa";
+import { dictionaries, DEFAULT_LOCALE, type Locale } from "@/lib/i18n/shared";
 
 /**
  * محرّك الطلبيات.
@@ -26,6 +27,7 @@ function generateOrderNumber(): string {
 export interface CreateOrderInput {
   cart: Cart;
   address: ShippingAddress;
+  locale?: Locale;
   userId?: string;
   addressId?: string;
   notes?: string;
@@ -44,13 +46,17 @@ export interface CreateOrderResult {
 export async function createLocalOrder(
   input: CreateOrderInput,
 ): Promise<CreateOrderResult> {
-  const summary = await buildCartSummary(input.cart);
+  const locale = input.locale ?? DEFAULT_LOCALE;
+  const summary = await buildCartSummary(input.cart, locale);
+  // القاموس يُختار من اللغة المُمرَّرة لا من الكوكيز: محرّك الطلبيات
+  // يجب أن يعمل خارج نطاق الطلب أيضًا (المهام المجدولة وسكربتات التحقق).
+  const t = dictionaries[locale];
 
   if (summary.lines.length === 0) {
-    throw new Error("السلة فارغة");
+    throw new Error(t.checkout.cartEmpty);
   }
   if (summary.hasIssues) {
-    throw new Error("توجد منتجات غير متاحة في السلة");
+    throw new Error(t.checkout.unavailableItems);
   }
 
   const orderNumber = generateOrderNumber();
