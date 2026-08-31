@@ -46,3 +46,7 @@ next-env.d.ts
 # local run logs
 *.log
 *.tmp.html
+
+# scratch html
+adm.html
+srch.tmp.html
