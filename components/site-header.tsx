@@ -4,24 +4,27 @@ import { getCurrentUser } from "@/lib/session";
 import { env } from "@/lib/env";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
 import { getTheme } from "@/lib/theme";
+import { getBannerDismissed } from "@/lib/banner";
 import { LanguageSwitcher, ThemeToggle } from "@/components/preferences";
+import { AnnouncementBar } from "@/components/announcement-bar";
 
 export async function SiteHeader() {
-  const [count, user, t, locale, theme] = await Promise.all([
+  const [count, user, t, locale, theme, bannerDismissed] = await Promise.all([
     cartCount(),
     getCurrentUser(),
     getDictionary(),
     getLocale(),
     getTheme(),
+    getBannerDismissed(),
   ]);
   const mode = env().AE_MODE;
 
   return (
     <>
-      {mode === "mock" && (
-        <div className="bg-amber-500 px-4 py-1.5 text-center text-xs font-medium text-amber-950">
+      {mode === "mock" && !bannerDismissed && (
+        <AnnouncementBar closeLabel={t.common.close}>
           {t.banner.mockMode}
-        </div>
+        </AnnouncementBar>
       )}
 
       <header className="sticky top-0 z-40 border-b border-[--color-border-app] bg-[--color-background]/85 backdrop-blur">

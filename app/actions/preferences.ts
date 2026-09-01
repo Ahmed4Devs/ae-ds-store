@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { LOCALE_COOKIE, LOCALES } from "@/lib/i18n";
 import { THEME_COOKIE, THEMES } from "@/lib/theme";
+import { BANNER_COOKIE } from "@/lib/banner";
 
 /**
  * تفضيلات العرض — اللغة والمظهر.
@@ -43,4 +44,14 @@ export async function setThemeAction(value: string): Promise<void> {
   });
 
   revalidatePath("/", "layout");
+}
+
+/** يتذكّر إغلاق شريط الإعلان فلا يظهر ثانيةً. */
+export async function dismissBannerAction(): Promise<void> {
+  const store = await cookies();
+  store.set(BANNER_COOKIE, "1", {
+    path: "/",
+    maxAge: YEAR,
+    sameSite: "lax",
+  });
 }

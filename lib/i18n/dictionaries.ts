@@ -33,6 +33,7 @@ export const ar = {
     system: "تلقائي",
     theme: "المظهر",
     language: "اللغة",
+    close: "إغلاق",
   },
 
   nav: {
@@ -376,6 +377,7 @@ export const en: Dictionary = {
     system: "System",
     theme: "Theme",
     language: "Language",
+    close: "Close",
   },
 
   nav: {
