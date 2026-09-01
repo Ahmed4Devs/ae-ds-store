@@ -5,6 +5,7 @@ import { Alert, Card } from "@/components/ui";
 import { OrderTracking } from "@/components/order-tracking";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
+import { ownsGuestOrder } from "@/lib/guest-orders";
 import { syncOrderIfStale } from "@/lib/order-sync";
 import { formatSar } from "@/lib/pricing";
 import { formatDateAr, formatSaudiPhone } from "@/lib/ksa";
@@ -39,8 +40,14 @@ export default async function OrderDetailPage(
 
   if (!order) notFound();
 
-  // الطلبيات المرتبطة بحساب لا يراها إلا صاحبها
-  if (order.userId && order.userId !== user?.id) notFound();
+  // الطلبيات المرتبطة بحساب لا يراها إلا صاحبها؛ وطلبيات الضيف لا يراها
+  // إلا المتصفّح الذي أنشأها (عبر كوكي موقّع) — بدون ذلك كان أي شخص يعرف
+  // رقم الطلبية يقرأ بياناتها كاملةً (IDOR).
+  if (order.userId) {
+    if (order.userId !== user?.id) notFound();
+  } else if (!(await ownsGuestOrder(orderNumber))) {
+    notFound();
+  }
 
   // استقصاء أولي إن مضى الفاصل الأدنى، ثم يتولّى العميل التحديث الدوري
   await syncOrderIfStale(order.id);

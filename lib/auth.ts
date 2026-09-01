@@ -38,9 +38,10 @@ export const auth = betterAuth({
 
   emailAndPassword: {
     enabled: true,
-    minPasswordLength: 8,
-    // لا نطلب تأكيد البريد في التطوير — فعّله قبل الإطلاق
-    requireEmailVerification: false,
+    // 12 محرفًا حدًّا أدنى — أطول من الافتراضي (8) لمقاومة التخمين
+    minPasswordLength: 12,
+    // يُفعَّل عبر AUTH_REQUIRE_EMAIL_VERIFICATION=true في الإنتاج (يتطلب مُرسِل بريد)
+    requireEmailVerification: env().AUTH_REQUIRE_EMAIL_VERIFICATION,
   },
 
   user: {
@@ -66,6 +67,30 @@ export const auth = betterAuth({
 
   advanced: {
     cookiePrefix: "ae_ds",
+    // كوكيز آمنة (Secure) في الإنتاج فقط — في التطوير على http تُكسر بغيرها
+    useSecureCookies: process.env.NODE_ENV === "production",
+    ipAddress: {
+      // لا نثق بـ X-Forwarded-For إلا إن ضبطه بروكسي عكسي موثوق.
+      // فارغة = تُتجاهَل الترويسة، فيتعذّر على المهاجم تدويرها لتجاوز الحدّ.
+      trustedProxies: env().TRUSTED_PROXIES,
+    },
+  },
+
+  /**
+   * تحديد المعدّل — يمنع تخمين كلمات المرور وحشو بيانات الاعتماد.
+   * الحدّ العام فضفاض، لكن مسارات المصادقة الحسّاسة مشدَّدة عبر customRules.
+   * لأن X-Forwarded-For لم يعد موثوقًا (أعلاه)، يعود المفتاح إلى عنوان
+   * الاتصال الحقيقي فيتعذّر تجاوز الحدّ بتزوير الترويسة.
+   */
+  rateLimit: {
+    enabled: true,
+    window: 60,
+    max: 100,
+    customRules: {
+      "/sign-in/email": { window: 60, max: 5 },
+      "/sign-up/email": { window: 3600, max: 5 },
+      "/forget-password": { window: 3600, max: 5 },
+    },
   },
 
   // يجب أن يكون الأخير — يتيح ضبط الكوكيز من Server Actions

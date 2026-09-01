@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
+import { ownsGuestOrder } from "@/lib/guest-orders";
 import { syncOrderIfStale } from "@/lib/order-sync";
 import type { OrderTrackingDto, TrackingNodeDto } from "@/lib/query/keys";
 
@@ -25,12 +26,15 @@ export async function GET(
     return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   }
 
-  // طلبية مرتبطة بحساب لا يقرأها إلا صاحبها
-  if (order.userId) {
-    const user = await getCurrentUser();
-    if (user?.id !== order.userId) {
-      return NextResponse.json({ error: "FORBIDDEN" }, { status: 403 });
-    }
+  // التحقق من الملكية: طلبية الحساب لصاحبها، وطلبية الضيف للمتصفّح الذي
+  // أنشأها. نعيد 404 (لا 403) في الحالتين حتى لا تصير الاستجابة أوراكلًا
+  // يكشف وجود الطلبية للمتطفّلين.
+  const authorized = order.userId
+    ? (await getCurrentUser())?.id === order.userId
+    : await ownsGuestOrder(orderNumber);
+
+  if (!authorized) {
+    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
   }
 
   // يستقصي من AliExpress فقط إن مضى الفاصل الأدنى — الحارس داخل الدالة

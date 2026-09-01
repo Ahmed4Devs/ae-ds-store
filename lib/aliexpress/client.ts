@@ -29,20 +29,70 @@ export interface AeCallResult<T> {
   durationMs: number;
 }
 
-/** الحقول التي لا يجوز تسجيلها أبدًا. */
+/**
+ * الحقول التي لا يجوز تسجيلها أبدًا: أسرار المنصة + بيانات العميل الشخصية.
+ * بيانات الطلبية (الاسم والجوال والعنوان) تصل متداخلة داخل سلاسل JSON
+ * (مثل param_place_order_request…)، لذا يجب حجبها بعمق لا على السطح فقط.
+ */
 const REDACTED_KEYS = new Set([
+  // أسرار المنصة
   "sign",
   "access_token",
   "refresh_token",
   "app_secret",
+  // بيانات شخصية (PII)
+  "full_name",
+  "fullName",
+  "contact_person",
+  "mobile_no",
+  "mobile",
+  "phone",
+  "address",
+  "address2",
+  "addressLine1",
+  "addressLine2",
+  "zip",
+  "postalCode",
+  "nat_addr",
+  "nationalAddress",
+  "email",
 ]);
 
-function redact(params: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(params)) {
-    out[k] = REDACTED_KEYS.has(k) ? "«محجوب»" : v;
+/**
+ * حجب متكرّر: يمرّ على الكائنات والمصفوفات، ويحاول تحليل السلاسل التي
+ * تبدو JSON ليحجب ما بداخلها ثم يعيد ترميزها. بهذا لا تنجو أي PII مهما
+ * تعمّقت في الحمولة.
+ */
+function deepRedact(value: unknown): unknown {
+  if (typeof value === "string") {
+    const t = value.trim();
+    const looksJson =
+      (t.startsWith("{") && t.endsWith("}")) ||
+      (t.startsWith("[") && t.endsWith("]"));
+    if (looksJson) {
+      try {
+        return JSON.stringify(deepRedact(JSON.parse(t)));
+      } catch {
+        // ليست JSON صالحة — تُترك كما هي
+      }
+    }
+    return value;
   }
-  return out;
+  if (Array.isArray(value)) return value.map(deepRedact);
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = REDACTED_KEYS.has(k) ? "«محجوب»" : deepRedact(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+export function redact(
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  return deepRedact(params) as Record<string, unknown>;
 }
 
 /**

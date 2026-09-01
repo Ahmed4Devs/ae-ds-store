@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { z } from "zod";
+import { sign, unsign } from "@/lib/signed-cookie";
 
 /**
  * سلة التسوّق — مخزّنة في كوكي موقّع بسيط.
@@ -19,7 +20,9 @@ const cartItemSchema = z.object({
   logisticsServiceName: z.string(),
 });
 
-export const cartSchema = z.array(cartItemSchema).max(30);
+// سقف 10 أسطر: كل سطر يستدعي المنتج والشحن من المصدر، فالسقف يحدّ كلفة
+// تجميع السلة ويقلّص سطح الاستغلال التضخيمي.
+export const cartSchema = z.array(cartItemSchema).max(10);
 
 export type CartItem = z.infer<typeof cartItemSchema>;
 export type Cart = z.infer<typeof cartSchema>;
@@ -31,8 +34,13 @@ export async function readCart(): Promise<Cart> {
   const store = await cookies();
   const raw = store.get(COOKIE)?.value;
   if (!raw) return [];
+
+  // الكوكي موقّع: نرفض أي قيمة لم يصدرها الخادم (سلة مزوّرة)
+  const value = unsign(raw);
+  if (!value) return [];
+
   try {
-    const parsed = cartSchema.safeParse(JSON.parse(raw));
+    const parsed = cartSchema.safeParse(JSON.parse(value));
     return parsed.success ? parsed.data : [];
   } catch {
     return [];
@@ -45,7 +53,7 @@ export async function writeCart(cart: Cart): Promise<void> {
     store.delete(COOKIE);
     return;
   }
-  store.set(COOKIE, JSON.stringify(cart), {
+  store.set(COOKIE, sign(JSON.stringify(cart)), {
     httpOnly: true,
     sameSite: "lax",
     path: "/",

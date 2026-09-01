@@ -18,8 +18,21 @@ const serverSchema = z.object({
 
   BETTER_AUTH_SECRET: z
     .string()
-    .min(16, "BETTER_AUTH_SECRET يجب ألا يقل عن 16 حرفًا"),
+    .min(32, "BETTER_AUTH_SECRET يجب ألا يقل عن 32 حرفًا (ولّده بـ: openssl rand -base64 32)"),
   BETTER_AUTH_URL: z.url().default("http://localhost:3000"),
+
+  // يتطلب تأكيد البريد قبل إنشاء الجلسة (فعّله في الإنتاج مع مُرسِل بريد)
+  AUTH_REQUIRE_EMAIL_VERIFICATION: z
+    .string()
+    .default("false")
+    .transform((v) => v.toLowerCase() === "true" || v === "1"),
+
+  // عناوين البروكسي العكسي الموثوقة لاستخلاص عنوان العميل الحقيقي.
+  // فارغة = لا نثق بترويسة X-Forwarded-For (الخادم مكشوف مباشرةً).
+  TRUSTED_PROXIES: z
+    .string()
+    .default("")
+    .transform((s) => s.split(",").map((x) => x.trim()).filter(Boolean)),
 
   // --- AliExpress ---
   AE_MODE: z.enum(["mock", "live"]).default("mock"),

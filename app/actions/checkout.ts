@@ -7,6 +7,7 @@ import { readCart, clearCart } from "@/lib/cart";
 import { shippingAddressSchema } from "@/lib/ksa";
 import { createLocalOrder, markOrderPaid, sourceOrderFromAliExpress } from "@/lib/orders";
 import { getCurrentUser } from "@/lib/session";
+import { rememberGuestOrder } from "@/lib/guest-orders";
 import { getDictionary, getLocale } from "@/lib/i18n";
 
 /**
@@ -94,7 +95,9 @@ export async function checkoutAction(
       locale,
       userId: user?.id,
       addressId,
-      notes: (formData.get("notes") as string) || undefined,
+      // حقل حرّ لا يُتحقَّق منه بمخطّط — نحدّ طوله منعًا لتضخّم التخزين
+      notes:
+        (formData.get("notes") as string)?.trim().slice(0, 500) || undefined,
     });
     orderId = created.orderId;
     orderNumber = created.orderNumber;
@@ -102,6 +105,11 @@ export async function checkoutAction(
     return {
       formError: e instanceof Error ? e.message : t.checkout.createFailed,
     };
+  }
+
+  // طلبية الضيف تُربَط بهذا المتصفّح حتى لا يقرأها غيره بمعرفة رقمها فقط
+  if (!user) {
+    await rememberGuestOrder(orderNumber);
   }
 
   // --- بديل بوابة الدفع -------------------------------------------------
