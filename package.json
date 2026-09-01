@@ -13,6 +13,7 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "db:scrub-logs": "tsx scripts/scrub-api-logs.ts",
     "verify:ae": "tsx scripts/verify-ae.ts",
     "verify:pricing": "tsx scripts/verify-pricing.ts",
     "verify": "npm run verify:ae && npm run verify:pricing && npm run verify:auth && npm run verify:orders",

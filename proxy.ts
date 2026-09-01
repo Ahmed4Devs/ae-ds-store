@@ -5,13 +5,15 @@ import { rateLimit } from "@/lib/rate-limit";
 /**
  * تحديد المعدّل على مستوى التطبيق (اصطلاح proxy في Next 16، بديل middleware).
  *
- * يغطّي مسارات API (عدا /api/auth الذي تتولّاه better-auth بحدّها الخاص)
- * وServer Actions (تُرسل ترويسة Next-Action) والمسارات الثقيلة (السلة،
- * إتمام الشراء، خيارات الشحن). يمنع إغراق المسارات والاستغلال التضخيمي.
+ * يغطّي: كل Server Actions أيًّا كانت الصفحة المستضيفة (تُرسل ترويسة
+ * Next-Action) — بما فيها إجراءات الإدارة والتفضيلات — ومسارات API (عدا
+ * /api/auth الذي تتولّاه better-auth بخنقها الخاص) وصفحتَي السلة وإتمام
+ * الشراء الثقيلتين. صفحات التصفّح العادية لا تُخنَق حتى لا يتعطّل التنقّل.
  *
- * تنبيه نشر: هذا الخادم يقرأ عنوان العميل من X-Forwarded-For، وهي ترويسة
- * يزوّرها العميل ما لم يضبطها بروكسي عكسي موثوق. في الإنتاج ضع بروكسي
- * (nginx/caddy) يمسح أي XFF وارد ويضبطه من العنوان الحقيقي.
+ * تنبيه نشر: عنوان العميل يُقرأ من X-Forwarded-For، وهي ترويسة يزوّرها
+ * العميل ما لم يضبطها بروكسي عكسي موثوق. على خادم مكشوف مباشرةً يُهزَم
+ * هذا الخنق بتدوير الترويسة؛ في الإنتاج ضع بروكسي (nginx/caddy) يمسح أي
+ * XFF وارد ويضبطه من العنوان الحقيقي. هذا الخنق طبقة دفاع لا حلٌّ كامل.
  */
 
 function clientKey(req: NextRequest): string {
@@ -22,37 +24,42 @@ function clientKey(req: NextRequest): string {
   return ip || "unknown";
 }
 
-export function proxy(req: NextRequest): NextResponse {
-  const path = req.nextUrl.pathname;
-
-  // better-auth يفرض حدّه الخاص على مسارات المصادقة
-  if (path.startsWith("/api/auth")) return NextResponse.next();
-
-  const isAction = req.headers.has("next-action");
-  const isHeavy =
-    path === "/api/shipping" ||
-    path === "/cart" ||
-    path === "/checkout" ||
-    isAction;
-
-  const group = isHeavy ? "heavy" : "api";
-  const max = isHeavy ? 30 : 120; // في الدقيقة
-  const { ok, retryAfter } = rateLimit(
-    `${clientKey(req)}:${group}`,
-    max,
-    60_000,
-  );
-
+function limitOrPass(req: NextRequest, group: string, max: number): NextResponse {
+  const { ok, retryAfter } = rateLimit(`${clientKey(req)}:${group}`, max, 60_000);
   if (!ok) {
     return NextResponse.json(
       { error: "RATE_LIMITED" },
       { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
   }
+  return NextResponse.next();
+}
 
+export function proxy(req: NextRequest): NextResponse {
+  const path = req.nextUrl.pathname;
+
+  // better-auth يفرض خنقه الخاص على مسارات المصادقة
+  if (path.startsWith("/api/auth")) return NextResponse.next();
+
+  // Server Action على أي صفحة — أثقل مجموعة (يشمل إجراءات الإدارة والتفضيلات)
+  if (req.headers.has("next-action")) return limitOrPass(req, "heavy", 30);
+
+  // مسارات API
+  if (path.startsWith("/api/")) {
+    const heavy = path === "/api/shipping";
+    return limitOrPass(req, heavy ? "heavy" : "api", heavy ? 30 : 120);
+  }
+
+  // صفحتان ثقيلتان تُعيدان تجميع السلة من المصدر
+  if (path === "/cart" || path === "/checkout") {
+    return limitOrPass(req, "heavy", 30);
+  }
+
+  // صفحات عادية — بلا خنق
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/api/:path*", "/cart", "/checkout", "/product/:path*"],
+  // يشمل كل المسارات عدا أصول Next الثابتة، ليغطّي Server Actions على أي صفحة
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

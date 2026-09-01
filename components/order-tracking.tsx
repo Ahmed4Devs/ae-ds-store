@@ -8,6 +8,23 @@ import { formatDateAr } from "@/lib/ksa";
 import type { OrderTrackingDto } from "@/lib/query/keys";
 
 /**
+ * يقبل رابط شركة الشحن فقط إن كان http/https.
+ *
+ * رابط cpWebsiteUrl مصدره بيانات تتبّع AliExpress (طرف ثالث)، ويُعرض كـ
+ * href. من دون التحقق من المخطّط قد يحمل javascript: أو data:. تهريب
+ * React يعطّل التنفيذ، لكن التحقق هنا دفاع صريح لا يعتمد على سلوك الإطار.
+ */
+function safeHttpUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * تتبّع الطلبية مع تحديث تلقائي.
  *
  * سبب الاستقصاء موثّق في مرجع الواجهات: AliExpress لا توفّر إشعارات
@@ -97,9 +114,9 @@ export function OrderTracking({
                   >
                     {pkg.mailNo}
                   </code>
-                  {pkg.cpWebsiteUrl && (
+                  {safeHttpUrl(pkg.cpWebsiteUrl) && (
                     <a
-                      href={pkg.cpWebsiteUrl}
+                      href={safeHttpUrl(pkg.cpWebsiteUrl)!}
                       target="_blank"
                       rel="noreferrer noopener"
                       className="text-xs text-brand-600 hover:underline"

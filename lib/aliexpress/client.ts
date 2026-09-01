@@ -34,29 +34,51 @@ export interface AeCallResult<T> {
  * بيانات الطلبية (الاسم والجوال والعنوان) تصل متداخلة داخل سلاسل JSON
  * (مثل param_place_order_request…)، لذا يجب حجبها بعمق لا على السطح فقط.
  */
-const REDACTED_KEYS = new Set([
+// أسماء مفاتيح تُحجَب حرفيًا (مطابقة غير حسّاسة لحالة الأحرف)
+const REDACTED_EXACT = new Set([
   // أسرار المنصة
   "sign",
   "access_token",
   "refresh_token",
   "app_secret",
-  // بيانات شخصية (PII)
+  // أسماء أشخاص وحقول عنوان لا تحمل جذرًا مميّزًا
   "full_name",
-  "fullName",
+  "fullname",
+  "first_name",
+  "last_name",
+  "receiver_name",
+  "buyer_name",
+  "sender_name",
+  "contact_name",
   "contact_person",
-  "mobile_no",
+  "person",
+  "zip",
+  "city",
+  "province",
+]);
+
+// جذور تُحجَب أينما وردت داخل اسم المفتاح (تلتقط الأشكال المركّبة مثل
+// receiver_address و send_mobile و buyer_email و detail_address). مقصورة
+// على جذور لا تظهر في أسماء حقول غير حسّاسة (تجنّبنا "name" عمدًا لأنه يرد
+// في logistics_service_name وغيره).
+const REDACTED_SUBSTRINGS = [
   "mobile",
   "phone",
-  "address",
-  "address2",
-  "addressLine1",
-  "addressLine2",
-  "zip",
-  "postalCode",
-  "nat_addr",
-  "nationalAddress",
   "email",
-]);
+  "addr", // address, address2, nat_addr, detail_address, addressLine…
+  "postal",
+  "passport",
+  "cpf",
+  "taxpayer",
+  "id_card",
+  "national",
+];
+
+function isSensitiveKey(key: string): boolean {
+  const k = key.toLowerCase();
+  if (REDACTED_EXACT.has(k)) return true;
+  return REDACTED_SUBSTRINGS.some((s) => k.includes(s));
+}
 
 /**
  * حجب متكرّر: يمرّ على الكائنات والمصفوفات، ويحاول تحليل السلاسل التي
@@ -82,7 +104,9 @@ function deepRedact(value: unknown): unknown {
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value)) {
-      out[k] = REDACTED_KEYS.has(k) ? "«محجوب»" : deepRedact(v);
+      // نتجاهل __proto__ حتى لا يلوّث كائن الإخراج (تلوث النموذج الأولي)
+      if (k === "__proto__") continue;
+      out[k] = isSensitiveKey(k) ? "«محجوب»" : deepRedact(v);
     }
     return out;
   }

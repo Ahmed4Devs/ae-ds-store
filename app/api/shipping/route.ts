@@ -28,10 +28,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   });
 
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "INVALID_PARAMS", issues: parsed.error.issues },
-      { status: 400 },
-    );
+    // لا نُفصح عن بنية التحقق الداخلية (مسارات الحقول ورموز zod) — إفشاء
+    // معلومات لا حاجة للعميل به؛ رمز مقتضب يكفي.
+    return NextResponse.json({ error: "INVALID_PARAMS" }, { status: 400 });
   }
 
   const locale = await getLocale();
