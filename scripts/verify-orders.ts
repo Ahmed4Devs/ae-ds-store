@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { env } from "@/lib/env";
 import { prisma } from "@/lib/db";
 import { searchProducts, getProduct, getShippingOptions } from "@/lib/aliexpress";
 import { createLocalOrder, sourceOrderFromAliExpress, markOrderPaid } from "@/lib/orders";
@@ -31,6 +32,15 @@ function section(t: string) {
 
 async function main() {
   console.log("\n=== تحقّق دورة حياة الطلبية ===");
+
+  // حارس سلامة: يُنشئ هذا السكربت طلبيات عبر مسار الشراء الحقيقي ثم يحذفها.
+  // في وضع live كان يشتري من AliExpress فعلًا ثم يمحو سجلّها المحلي.
+  if (env().AE_MODE !== "mock") {
+    console.error(`
+✗ رُفض التشغيل: يتطلّب AE_MODE=mock (الحالي ${env().AE_MODE}).`);
+    await prisma.$disconnect();
+    process.exit(1);
+  }
 
   section("المخطّط المستهدف في قاعدة البيانات");
   // AeApiLog يخص مشروعنا وحده. نجاح الاستعلام عنه يثبت أن مُهيّئ التعريف
