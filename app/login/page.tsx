@@ -24,6 +24,14 @@ export default async function LoginPage() {
           <p className="mb-6 text-sm text-ink-500">{t.auth.loginSubtitle}</p>
           <AuthForm mode="signin" labels={t.auth} />
           <p className="mt-5 text-center text-sm text-ink-500">
+            <Link
+              href="/forgot-password"
+              className="font-medium text-brand-600 hover:underline"
+            >
+              {t.auth.forgotPassword}
+            </Link>
+          </p>
+          <p className="mt-2 text-center text-sm text-ink-500">
             {t.auth.noAccount}{" "}
             <Link href="/register" className="font-medium text-brand-600 hover:underline">
               {t.auth.createAccount}</Link>

@@ -22,12 +22,31 @@ const handlers = toNextJsHandler(auth.handler);
 
 export const GET = handlers.GET;
 
-// المسار (نسبةً إلى /api/auth) → (أقصى إخفاقات، النافذة بالمللي ثانية)
-const RULES: Record<string, { max: number; windowMs: number }> = {
+/**
+ * المسار (نسبةً إلى /api/auth) → (أقصى محاولات، النافذة بالمللي ثانية).
+ *
+ * `countSuccess` يقلب قاعدة العدّ لمسار بعينه. السبب مذكور عند موضع العدّ
+ * في الأسفل، وهو ما كان يُعطّل خنق مسار الاستعادة كليًّا.
+ *
+ * حُذف من هنا `/forget-password`: لا وجود لهذا المسار في نواة
+ * better-auth 1.7 أصلًا، فكانت القاعدة تحمي عنوانًا لا يُستدعى.
+ */
+const RULES: Record<
+  string,
+  { max: number; windowMs: number; countSuccess?: true }
+> = {
   "/sign-in/email": { max: 10, windowMs: 15 * 60_000 },
   "/sign-up/email": { max: 5, windowMs: 60 * 60_000 },
-  "/forget-password": { max: 5, windowMs: 60 * 60_000 },
-  "/request-password-reset": { max: 5, windowMs: 60 * 60_000 },
+  "/request-password-reset": {
+    max: 5,
+    windowMs: 60 * 60_000,
+    countSuccess: true,
+  },
+  "/send-verification-email": {
+    max: 5,
+    windowMs: 60 * 60_000,
+    countSuccess: true,
+  },
 };
 
 /** يستخرج البريد من الجسم أيًّا كانت صيغته (لا يعتمد على Content-Type وحده). */
@@ -82,9 +101,25 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const res = await handlers.POST(req);
+  const succeeded = res.status >= 200 && res.status < 300;
 
-  // نعدّ الفشل فقط؛ النجاح يصفّر العدّاد فلا يُقفَل من نجح دخوله
-  if (res.status >= 200 && res.status < 300) {
+  /**
+   * قاعدتان مختلفتان للعدّ، والخلط بينهما كان يُبطل الخنق تمامًا.
+   *
+   * • مسارات الاعتماد (الدخول والتسجيل): نعدّ **الفشل** فقط ونصفّر عند
+   *   النجاح، فلا يُقفَل مستخدم شرعي نجح دخوله.
+   *
+   * • مسارا إرسال البريد (الاستعادة وإعادة التأكيد): يردّان 200 **دائمًا**،
+   *   حتى لبريد غير مسجَّل — وهذا مقصود من المكتبة كي لا يصير الردّ
+   *   أوراكلًا يكشف من لديه حساب. لكن أثره هنا أن كل طلب كان يمرّ بفرع
+   *   النجاح فيمسح العدّاد، فلا يتراكم شيء ولا يُخنق شيء: من يريد إغراق
+   *   بريد شخص برسائل استعادة كان يستطيع ذلك بلا حدّ. لذلك نعدّ النجاح
+   *   نفسه على هذين المسارين — فالمورد المحميّ هو إرسال الرسالة لا
+   *   تخمين كلمة السر.
+   */
+  if (rule.countSuccess) {
+    recordHit(key, rule.windowMs);
+  } else if (succeeded) {
     clearKey(key);
   } else {
     recordHit(key, rule.windowMs);
