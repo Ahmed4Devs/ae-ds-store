@@ -2,10 +2,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { SignOutButton } from "@/components/sign-out-button";
+import { AddressManager } from "@/components/address-manager";
+import { ChangePasswordForm } from "@/components/change-password-form";
+import { ProfileForm } from "@/components/profile-form";
 import { ButtonLink, Card } from "@/components/ui";
 import { getCurrentUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
-import { formatSaudiPhone } from "@/lib/ksa";
 import { getDictionary } from "@/lib/i18n";
 
 export async function generateMetadata() {
@@ -19,14 +21,16 @@ export default async function AccountPage() {
 
   const [orderCount, addresses] = await Promise.all([
     prisma.order.count({ where: { userId: user.id } }),
+    // كل العناوين لا أول خمسة: هذه الآن شاشة إدارة، وقصّ القائمة يعني
+    // عنوانًا لا يستطيع صاحبه حذفه ولا تعديله.
     prisma.address.findMany({
       where: { userId: user.id },
-      orderBy: { createdAt: "desc" },
-      take: 5,
+      orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }],
     }),
   ]);
 
   const isAdmin = (user as { role?: string }).role === "ADMIN";
+  const phone = (user as { phone?: string | null }).phone ?? "";
 
   return (
     <>
@@ -47,6 +51,46 @@ export default async function AccountPage() {
           </div>
         </Card>
 
+        <Card className="mb-5 p-5">
+          <ProfileForm
+            defaultName={user.name}
+            defaultPhone={phone}
+            email={user.email}
+            labels={{
+              title: t.account.profileTitle,
+              name: t.account.nameLabel,
+              phone: t.account.phoneLabel,
+              phoneHint: t.checkout.phoneHint,
+              email: t.account.emailLabel,
+              emailImmutable: t.account.emailImmutable,
+              saved: t.account.profileSaved,
+              failed: t.account.profileFailed,
+              save: t.common.save,
+              saving: t.common.saving,
+              nameRequired: t.auth.nameRequired,
+            }}
+          />
+        </Card>
+
+        <Card className="mb-5 p-5">
+          <ChangePasswordForm
+            labels={{
+              title: t.account.changePasswordTitle,
+              currentPassword: t.account.currentPassword,
+              newPassword: t.account.newPassword,
+              confirmPassword: t.account.confirmPassword,
+              cta: t.account.changePasswordCta,
+              processing: t.auth.processing,
+              changed: t.account.passwordChanged,
+              wrong: t.account.passwordWrong,
+              policy: t.auth.passwordPolicy,
+              mismatch: t.auth.passwordsMismatch,
+              revokeOthers: t.account.revokeOthers,
+              unexpectedError: t.common.unexpectedError,
+            }}
+          />
+        </Card>
+
         <div className="mb-5 grid gap-4 sm:grid-cols-2">
           <Card className="p-5">
             <p className="text-sm text-ink-500">{t.account.ordersCount}</p>
@@ -65,31 +109,23 @@ export default async function AccountPage() {
           </Card>
         </div>
 
-        {addresses.length > 0 && (
-          <Card className="mb-5 overflow-hidden">
-            <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
-              {t.account.myAddresses}
-            </p>
-            <ul className="divide-y divide-[--color-border-app]">
-              {addresses.map((a) => (
-                <li key={a.id} className="p-4 text-sm leading-relaxed">
-                  <p className="font-medium">{a.fullName}</p>
-                  <p className="text-ink-500" dir="ltr">
-                    {formatSaudiPhone(a.phone)}
-                  </p>
-                  <p className="text-ink-500">
-                    {a.addressLine1}، {a.city}، {a.province}
-                  </p>
-                  {a.nationalAddr && (
-                    <p className="text-xs text-ink-500 nums">
-                      {t.account.nationalAddressLabel}: {a.nationalAddr}
-                    </p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
+        <AddressManager
+          addresses={addresses.map((a) => ({
+            id: a.id,
+            fullName: a.fullName,
+            phone: a.phone,
+            province: a.province,
+            city: a.city,
+            addressLine1: a.addressLine1,
+            addressLine2: a.addressLine2,
+            postalCode: a.postalCode,
+            nationalAddr: a.nationalAddr,
+            isDefault: a.isDefault,
+          }))}
+          labels={t.account}
+          fieldLabels={t.checkout}
+          common={t.common}
+        />
 
         {isAdmin && (
           <Card className="p-5">
