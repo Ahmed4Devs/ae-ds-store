@@ -40,11 +40,22 @@ const paymentOrigins = Array.from(
 );
 const extra = paymentOrigins.length > 0 ? ` ${paymentOrigins.join(" ")}` : "";
 
+/**
+ * `'unsafe-eval'` في التطوير وحده.
+ *
+ * React مع Turbopack يستعمل eval() في وضع التطوير لميزات التنقيح (إعادة
+ * بناء مسار الاستدعاءات، والتحديث الساخن)، فبدونها يظهر خطأ Console متكرّر.
+ * الإنتاج يبقى صارمًا بلا eval — React لا يستعملها هناك إطلاقًا — فلا نفتح
+ * ثغرة تنفيذ ديناميكي في المتجر المنشور.
+ */
+const devEval =
+  process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : "";
+
 const CSP = [
   "default-src 'self'",
   "img-src 'self' https: data:",
   "style-src 'self' 'unsafe-inline'",
-  `script-src 'self' 'unsafe-inline'${extra}`,
+  `script-src 'self' 'unsafe-inline'${devEval}${extra}`,
   "font-src 'self' https: data:",
   `connect-src 'self'${extra}`,
   // صفحة الدفع المستضافة تُفتح في إطار أو بتحويل كامل حسب المزوّد
