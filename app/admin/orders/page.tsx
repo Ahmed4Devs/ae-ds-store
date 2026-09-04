@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireAdmin } from "@/lib/session";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { orderStatusLabel } from "@/components/order-status";
 import { AdminOrdersTable } from "@/components/admin-orders-table";
@@ -34,6 +35,8 @@ function isStatus(v: string): v is OrderStatusValue {
 export default async function AdminOrdersPage(
   props: PageProps<"/admin/orders">,
 ) {
+  // حارس ذاتي — لا يُكتفى بحماية التخطيط (راجع requireAdmin). يسبق كل قراءة.
+  await requireAdmin();
   const sp = await props.searchParams;
   const statusParam = typeof sp.status === "string" ? sp.status : "";
   const status = isStatus(statusParam) ? statusParam : undefined;

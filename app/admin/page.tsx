@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireAdmin } from "@/lib/session";
 import { Card, Badge, Alert } from "@/components/ui";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
@@ -13,6 +14,8 @@ export async function generateMetadata() {
 }
 
 export default async function AdminHome() {
+  // حارس ذاتي — لا يُكتفى بحماية التخطيط (راجع requireAdmin). يسبق كل قراءة.
+  await requireAdmin();
   const cfg = env();
   const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
 

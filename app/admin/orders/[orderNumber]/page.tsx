@@ -1,13 +1,29 @@
 import { notFound } from "next/navigation";
+import { requireAdmin } from "@/lib/session";
 import Link from "next/link";
 import { Alert, Badge, Card } from "@/components/ui";
 import { OrderStatusBadge } from "@/components/order-status";
 import { RetrySourcingButton } from "@/components/retry-sourcing";
+import { AdminOrderActions } from "@/components/admin-order-actions";
 import { prisma } from "@/lib/db";
+import { activeProvider } from "@/lib/payments";
 import { formatSar } from "@/lib/pricing";
 import { formatDateAr, formatSaudiPhone } from "@/lib/ksa";
 import type { ShippingAddress } from "@/lib/ksa";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
+
+/** ألوان شارات حالة الدفع — النهائية الناجحة خضراء والفاشلة حمراء. */
+const PAYMENT_TONES: Record<
+  string,
+  "neutral" | "info" | "success" | "warning" | "danger"
+> = {
+  REQUIRES_ACTION: "warning",
+  PENDING: "info",
+  PAID: "success",
+  FAILED: "danger",
+  EXPIRED: "neutral",
+  REFUNDED: "neutral",
+};
 
 export async function generateMetadata() {
   const t = await getDictionary();
@@ -17,6 +33,8 @@ export async function generateMetadata() {
 export default async function AdminOrderPage(
   props: PageProps<"/admin/orders/[orderNumber]">,
 ) {
+  // حارس ذاتي — لا يُكتفى بحماية التخطيط (راجع requireAdmin). يسبق كل قراءة.
+  await requireAdmin();
   const { orderNumber } = await props.params;
   const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
 
@@ -26,6 +44,8 @@ export default async function AdminOrderPage(
       items: true,
       user: { select: { name: true, email: true } },
       aeOrders: { include: { packages: true } },
+      // الأحدث أولًا: محاولة الدفع الأخيرة هي المعنيّة دائمًا
+      payments: { orderBy: { createdAt: "desc" } },
     },
   });
 
@@ -42,6 +62,15 @@ export default async function AdminOrderPage(
     (Number(order.costSubtotal) + Number(order.costShipping)) *
     Number(order.fxRateUsed);
   const margin = Number(order.totalSar) - costSar;
+
+  // التأكيد اليدوي يخصّ المزوّد «يدوي» وحده، ولا يُعرض إلا لمحاولة ما زالت
+  // مفتوحة — تأكيد محاولة منتهية أو مدفوعة يخلق ازدواج تحصيل.
+  const settleableIntent =
+    activeProvider() === "manual"
+      ? (order.payments.find(
+          (p) => p.status === "REQUIRES_ACTION" || p.status === "PENDING",
+        ) ?? null)
+      : null;
 
   return (
     <>
@@ -60,6 +89,21 @@ export default async function AdminOrderPage(
           {order.status === "SOURCING_FAILED" && (
             <RetrySourcingButton orderId={order.id} labels={{ retry: t.admin.retrySourcing, retrying: t.admin.retrying }} />
           )}
+          <AdminOrderActions
+            orderId={order.id}
+            settleableIntentId={settleableIntent?.id ?? null}
+            labels={{
+              cancelCta: t.admin.cancelOrderCta,
+              cancelTitle: t.admin.cancelOrderTitle,
+              cancelBody: t.admin.cancelOrderBody,
+              cancelReason: t.admin.cancelOrderReason,
+              cancelConfirm: t.admin.cancelOrderConfirm,
+              cancelling: t.orders.cancelling,
+              close: t.common.cancel,
+              confirmPayment: t.admin.confirmPayment,
+              confirmingPayment: t.admin.confirmingPayment,
+            }}
+          />
         </div>
       </div>
 
@@ -67,6 +111,25 @@ export default async function AdminOrderPage(
         <div className="mb-6">
           <Alert tone="danger" title={t.admin.sourcingFailedTitle}>
             {t.admin.sourcingFailedBody}
+          </Alert>
+        </div>
+      )}
+
+      {order.status === "CANCELLED" && (
+        <div className="mb-6">
+          <Alert tone="warning" title={t.admin.orderCancelled}>
+            {order.cancelledAt && (
+              <p className="nums">
+                {fill(t.orders.cancelledAt, {
+                  date: formatDateAr(order.cancelledAt, locale),
+                })}
+              </p>
+            )}
+            {order.cancelReason && (
+              <p className="mt-1 text-xs" dir="auto">
+                {t.orders.cancelReason}: {order.cancelReason}
+              </p>
+            )}
           </Alert>
         </div>
       )}
@@ -172,6 +235,63 @@ export default async function AdminOrderPage(
                   </li>
                 ))}
               </ul>
+            )}
+          </Card>
+
+          {/* محاولات الدفع */}
+          <Card className="overflow-hidden">
+            <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
+              {t.admin.paymentIntents}
+            </p>
+            {order.payments.length === 0 ? (
+              <p className="p-5 text-sm text-ink-500">{t.admin.noPayments}</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="border-b border-[--color-border-app] text-xs text-ink-500">
+                    <tr>
+                      <th className="px-4 py-2 text-start font-medium">
+                        {t.admin.colProvider}
+                      </th>
+                      <th className="px-4 py-2 text-start font-medium">
+                        {t.admin.colRef}
+                      </th>
+                      <th className="px-4 py-2 text-start font-medium">
+                        {t.admin.colAmount}
+                      </th>
+                      <th className="px-4 py-2 text-start font-medium">
+                        {t.admin.colStatus}
+                      </th>
+                      <th className="px-4 py-2 text-start font-medium">
+                        {t.admin.colDate}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[--color-border-app]">
+                    {order.payments.map((p) => (
+                      <tr key={p.id}>
+                        <td className="px-4 py-2">{p.provider}</td>
+                        <td className="px-4 py-2">
+                          <code className="font-mono text-xs nums" dir="ltr">
+                            {p.providerRef}
+                          </code>
+                        </td>
+                        <td className="px-4 py-2 nums">
+                          {formatSar(Number(p.amountSar), locale)}
+                        </td>
+                        <td className="px-4 py-2">
+                          <Badge tone={PAYMENT_TONES[p.status] ?? "neutral"}>
+                            {t.payment.status[p.status]}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-2 text-xs text-ink-500 nums">
+                          {formatDateAr(p.createdAt, locale)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Card>
 

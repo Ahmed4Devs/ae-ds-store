@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requireAdmin } from "@/lib/session";
 import { Badge, Card, EmptyState } from "@/components/ui";
 import { SyncOrdersButton } from "@/components/retry-sourcing";
 import { prisma } from "@/lib/db";
@@ -11,6 +12,8 @@ export async function generateMetadata() {
 }
 
 export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
+  // حارس ذاتي — لا يُكتفى بحماية التخطيط (راجع requireAdmin). يسبق كل قراءة.
+  await requireAdmin();
   const sp = await props.searchParams;
   const onlyFailed = sp.failed === "1";
 
