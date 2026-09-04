@@ -151,6 +151,28 @@ export async function SiteFooter() {
                   {t.footer.trackOrder}
                 </Link>
               </li>
+              {/* السياسات في التذييل لا في الرأس: تُقرأ مرّة عند الحاجة،
+                  ووجودها ظاهرًا في كل صفحة شرط في متاجر التجزئة السعودية. */}
+              <li>
+                <Link href="/policies/shipping" className="hover:text-brand-600">
+                  {t.footer.shippingPolicy}
+                </Link>
+              </li>
+              <li>
+                <Link href="/policies/returns" className="hover:text-brand-600">
+                  {t.policies.returnsTitle}
+                </Link>
+              </li>
+              <li>
+                <Link href="/policies/privacy" className="hover:text-brand-600">
+                  {t.policies.privacyTitle}
+                </Link>
+              </li>
+              <li>
+                <Link href="/policies/terms" className="hover:text-brand-600">
+                  {t.policies.termsTitle}
+                </Link>
+              </li>
             </ul>
           </div>
           <div>
