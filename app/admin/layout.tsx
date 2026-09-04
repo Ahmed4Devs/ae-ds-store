@@ -9,6 +9,8 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
   const nav = [
     { href: "/admin", label: t.admin.overview },
     { href: "/admin/orders", label: t.admin.orders },
+    { href: "/admin/products", label: t.admin.products },
+    { href: "/admin/settings", label: t.admin.settings },
     { href: "/admin/api-log", label: t.admin.apiLog },
   ];
 

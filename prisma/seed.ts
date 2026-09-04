@@ -1,14 +1,24 @@
 import "dotenv/config";
 import { prisma } from "@/lib/db";
 import { auth } from "@/lib/auth";
+import { searchProducts } from "@/lib/aliexpress";
+import { fetchAndMirrorProduct } from "@/lib/catalog";
 
 /**
  * بذر بيانات التطوير.
  * يُشغَّل بـ: npm run db:seed
  *
- * ينشئ حساب مسؤول وحساب عميل. لا يبذر منتجات لأن الكتالوج يُجلب حيًّا
- * من AliExpress (أو من طبقة المحاكاة في وضع mock).
+ * ينشئ حسابَي مسؤول وعميل، وسعر صرف مرجعيًّا، ويملأ **مختارات المتجر**.
+ *
+ * البحث العام يمرّ إلى AliExpress حيًّا فلا يحتاج بذرًا، لكن صفحة
+ * `/collection` تقرأ المرآة المحلية والمنشورَ منها وحده — والمرآة لا
+ * تمتلئ إلا حين تُفتح صفحة منتج. فعلى قاعدة جديدة كانت الصفحة تظهر
+ * فارغة وكأنها معطوبة. نبذر هنا بضعة منتجات وننشرها ليكون للصفحة معنًى
+ * من أول تشغيل.
  */
+
+/** عدد المنتجات المنشورة في البذر — يكفي لملء شبكة العرض. */
+const SEED_PRODUCTS = 8;
 
 const ADMIN = {
   name: "مدير المتجر",
@@ -90,15 +100,49 @@ async function main() {
     console.log("  ✓ أُضيف عنوان افتراضي للعميل");
   }
 
-  // سعر صرف مرجعي
-  await prisma.fxRate.create({
-    data: {
-      baseCurrency: "USD",
-      quoteCurrency: "SAR",
-      rate: 3.75,
-      source: "seed",
-    },
+  // سعر صرف مرجعي — جدول FxRate سجلّ تاريخي يُضاف إليه ولا يُحدَّث، فنمنع
+  // تراكم صفوف متطابقة عند إعادة البذر.
+  const seededRate = await prisma.fxRate.findFirst({ where: { source: "seed" } });
+  if (!seededRate) {
+    await prisma.fxRate.create({
+      data: {
+        baseCurrency: "USD",
+        quoteCurrency: "SAR",
+        rate: 3.75,
+        source: "seed",
+      },
+    });
+    console.log("  ✓ سُجّل سعر صرف مرجعي");
+  }
+
+  // مختارات المتجر
+  const alreadyPublished = await prisma.product.count({
+    where: { isPublished: true },
   });
+
+  if (alreadyPublished > 0) {
+    console.log(`  • المختارات مملوءة مسبقًا (${alreadyPublished} منتجًا)`);
+  } else {
+    const found = await searchProducts({ pageSize: SEED_PRODUCTS });
+    let published = 0;
+
+    for (const item of found.items.slice(0, SEED_PRODUCTS)) {
+      try {
+        // نمرّ بدالة المرآة نفسها التي يستعملها المتجر، لا بكتابة مباشرة:
+        // فتبقى بنية الصفوف ووحدات SKU مطابقة تمامًا لما يُنتجه التصفّح.
+        await fetchAndMirrorProduct(item.aeProductId);
+        await prisma.product.update({
+          where: { aeProductId: item.aeProductId },
+          data: { isPublished: true },
+        });
+        published++;
+      } catch (e) {
+        console.warn(`  ! تعذّر بذر المنتج ${item.aeProductId}:`, e);
+      }
+    }
+
+    console.log(`  ✓ نُشر ${published} منتجًا في المختارات`);
+  }
 
   console.log(`\n  المسؤول : ${ADMIN.email} / ${ADMIN.password}`);
   console.log(`  العميل  : ${CUSTOMER.email} / ${CUSTOMER.password}`);
