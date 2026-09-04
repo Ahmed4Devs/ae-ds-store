@@ -30,7 +30,15 @@ export interface PriceBreakdown {
   marginSar: number;
 }
 
-/** سعر الصرف الفعّال = السعر الأساسي + هامش احتياطي لتقلّب الصرف ورسوم التحويل. */
+/**
+ * سعر الصرف الفعّال = السعر الأساسي + هامش احتياطي لتقلّب الصرف ورسوم التحويل.
+ *
+ * ⚠️ هذه النسخة تقرأ من متغيّرات البيئة فقط وهي **الاحتياطي لا مصدر الحقيقة**.
+ * مصدر الحقيقة هو `effectiveFxRateAsync` في lib/fx.ts (يقرأ جدول FxRate).
+ * تبقى هذه الدالة متزامنة عمدًا: لها متصلون متزامنون (لوحة الإدارة،
+ * وحساب المدى الافتراضي في المسارات التي لا تنتظر قاعدة بيانات)،
+ * وتحويلها إلى async يتسلسل عبر كامل شجرة التسعير بلا مقابل.
+ */
 export function effectiveFxRate(): number {
   const cfg = env();
   return cfg.FX_USD_TO_SAR * (1 + cfg.FX_BUFFER_PERCENT / 100);
@@ -46,8 +54,11 @@ export function effectiveFxRate(): number {
 export function roundPrice(amount: number, step?: number): number {
   const s = step ?? env().PRICE_ROUNDING;
   const cents = amount * 100;
-  if (s <= 0) return Math.round(cents) / 100;
   const stepCents = Math.round(s * 100);
+  // s ≤ 0 أو خطوةٌ أصغر من نصف هللة (0 < s < 0.005) كلاهما يجعل stepCents
+  // صفرًا؛ القسمة عليه تُنتج NaN فتصير كل الأسعار «ليست رقمًا». نتراجع إلى
+  // التقريب إلى أقرب هللة بدل إنتاج سعر معطوب.
+  if (s <= 0 || stepCents === 0) return Math.round(cents) / 100;
   return (Math.round(cents / stepCents) * stepCents) / 100;
 }
 

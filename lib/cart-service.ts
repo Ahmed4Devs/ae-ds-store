@@ -1,5 +1,7 @@
 import { getProduct, getShippingOptions, AeApiError } from "@/lib/aliexpress";
 import { calculateTotals, formatSar, retailUnitPriceSar, toSar } from "@/lib/pricing";
+import { effectiveFxRateAsync } from "@/lib/fx";
+import { prisma } from "@/lib/db";
 import { deliveryEstimateAr } from "@/lib/ksa";
 import type { Cart } from "@/lib/cart";
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/shared";
@@ -86,8 +88,19 @@ export async function buildCartSummary(
   const msg = ISSUES[locale];
   const lines: CartLine[] = [];
 
+  // سعر الصرف يُحسم مرة واحدة لكل سلة: لو تُرك لكل استدعاء أن يقرأه بنفسه
+  // لأمكن أن يتغيّر السعر بين سطر وآخر داخل التجميع نفسه فلا يطابق
+  // مجموع الأسطر الإجمالي المعروض.
+  // وهنا كان الخلل: هذه الاستدعاءات كانت تسقط إلى قيمة متغيّر البيئة،
+  // فسعر يضبطه المسؤول في لوحة الإعدادات يُتجاهَل تمامًا عند الدفع.
+  const [fxRate, margins] = await Promise.all([
+    effectiveFxRateAsync(),
+    productMargins(cart),
+  ]);
+
   for (const item of cart) {
     let line: CartLine | null = null;
+    const marginPercent = margins.get(item.aeProductId);
 
     try {
       const [product, shipping] = await Promise.all([
@@ -113,8 +126,11 @@ export async function buildCartSummary(
           sku.variantLabel,
         );
       } else {
-        const unitPriceSar = retailUnitPriceSar(sku.sourcePrice);
-        const shippingSar = toSar(ship.feeSource);
+        const unitPriceSar = retailUnitPriceSar(sku.sourcePrice, {
+          marginPercent,
+          fxRate,
+        });
+        const shippingSar = toSar(ship.feeSource, fxRate);
         const issue =
           sku.stock === 0
             ? msg.outOfStock
@@ -163,7 +179,9 @@ export async function buildCartSummary(
       quantity: l.quantity,
       shippingCostSource: l.shippingCostSource,
       shippingIncludesVat: l.shippingIncludesVat,
+      marginPercent: margins.get(l.aeProductId),
     })),
+    fxRate,
   );
 
   const maxDays = usable.reduce<number | null>(
@@ -185,6 +203,34 @@ export async function buildCartSummary(
     hasIssues: lines.some((l) => l.issue !== null),
     hasUntracked: usable.some((l) => !l.hasTracking),
   };
+}
+
+/**
+ * هوامش الربح الخاصة بمنتجات السلة، باستعلام واحد لا استعلام لكل سطر.
+ *
+ * المفقود من المرآة المحلية لا يُدرَج في الخريطة إطلاقًا، فيقع التسعير
+ * على الهامش الافتراضي — وهو السلوك الصحيح: غياب الصف ليس هامشًا صفريًا.
+ * وتعثّر القراءة يُبتلع للسبب نفسه: الهامش الخاص تحسين تجاري، وإسقاط
+ * السلة كلها لأجله خسارة أكبر من بيع سطر بالهامش الافتراضي.
+ */
+async function productMargins(cart: Cart): Promise<Map<string, number>> {
+  const ids = [...new Set(cart.map((i) => i.aeProductId))];
+  if (ids.length === 0) return new Map();
+
+  try {
+    const rows = await prisma.product.findMany({
+      where: { aeProductId: { in: ids }, marginPercent: { not: null } },
+      select: { aeProductId: true, marginPercent: true },
+    });
+
+    return new Map(
+      // Decimal من Prisma — التحويل إلزامي قبل أي استخدام حسابي
+      rows.map((r) => [r.aeProductId, Number(r.marginPercent)]),
+    );
+  } catch (e) {
+    console.error("[cart] تعذّرت قراءة هوامش المنتجات — سيُستخدم الافتراضي:", e);
+    return new Map();
+  }
 }
 
 function brokenLine(
