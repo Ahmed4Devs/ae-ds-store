@@ -132,7 +132,7 @@ export default async function PayPage(props: PageProps<"/pay/[orderNumber]">) {
             {formatSar(Number(order.totalSar), locale)}
           </span>
         </div>
-        <div className="mt-3 flex flex-wrap items-baseline justify-between gap-3 border-t border-[--color-border-app] pt-3">
+        <div className="mt-3 flex flex-wrap items-baseline justify-between gap-3 border-t border-(--color-border-app) pt-3">
           <span className="text-sm text-ink-500">{t.payment.provider}</span>
           <span className="text-sm font-medium">
             {providerLabel(provider, t)}

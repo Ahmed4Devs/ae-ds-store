@@ -91,7 +91,7 @@ function TriggerButton({
       aria-haspopup="menu"
       aria-expanded={open}
       className={cx(
-        "grid size-9 place-items-center rounded-full border border-[--color-border-app] transition",
+        "grid size-9 place-items-center rounded-full border border-(--color-border-app) transition",
         open
           ? "border-brand-400 text-brand-700"
           : "text-ink-600 hover:border-brand-400 hover:text-brand-700 dark:text-ink-300",
@@ -115,7 +115,7 @@ function MenuPanel({
     <div
       role="menu"
       aria-label={label}
-      className="absolute end-0 top-full z-50 mt-2 min-w-[9rem] rounded-xl border border-[--color-border-app] bg-[--color-surface] p-1 shadow-lg"
+      className="absolute end-0 top-full z-50 mt-2 min-w-[9rem] rounded-xl border border-(--color-border-app) bg-(--color-surface) p-1 shadow-lg"
     >
       {children}
     </div>

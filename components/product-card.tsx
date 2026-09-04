@@ -19,7 +19,7 @@ export function ProductCard({
   return (
     <Link
       href={`/product/${product.aeProductId}`}
-      className="group flex flex-col overflow-hidden rounded-xl border border-[--color-border-app] bg-[--color-surface] transition hover:border-brand-400 hover:shadow-lg"
+      className="group flex flex-col overflow-hidden rounded-xl border border-(--color-border-app) bg-(--color-surface) transition hover:border-brand-400 hover:shadow-lg"
     >
       <div className="relative aspect-square overflow-hidden bg-ink-100 dark:bg-ink-800">
         {/* eslint-disable-next-line @next/next/no-img-element */}

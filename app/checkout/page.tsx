@@ -78,7 +78,7 @@ export default async function CheckoutPage() {
             <Card className="sticky top-20 p-5">
               <p className="mb-4 font-semibold">{t.cart.summary}</p>
 
-              <ul className="mb-4 space-y-3 border-b border-[--color-border-app] pb-4">
+              <ul className="mb-4 space-y-3 border-b border-(--color-border-app) pb-4">
                 {summary.lines.map((l) => (
                   <li
                     key={`${l.aeProductId}|${l.skuAttr}`}
@@ -118,7 +118,7 @@ export default async function CheckoutPage() {
                   <dt className="text-ink-500">{t.cart.vat}</dt>
                   <dd className="nums">{formatSar(summary.vatSar, locale)}</dd>
                 </div>
-                <div className="flex justify-between border-t border-[--color-border-app] pt-3 text-base font-bold">
+                <div className="flex justify-between border-t border-(--color-border-app) pt-3 text-base font-bold">
                   <dt>{t.cart.total}</dt>
                   <dd className="nums">{formatSar(summary.totalSar, locale)}</dd>
                 </div>

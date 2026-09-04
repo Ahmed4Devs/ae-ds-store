@@ -152,7 +152,7 @@ export function AddressManager({
 
   return (
     <Card className="mb-5 overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[--color-border-app] px-5 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-(--color-border-app) px-5 py-3">
         <p className="font-semibold">{labels.manageAddresses}</p>
         {!editing && (
           <Button
@@ -172,7 +172,7 @@ export function AddressManager({
       {notice && (
         <p
           className={
-            "border-b border-[--color-border-app] px-5 py-3 text-sm leading-relaxed " +
+            "border-b border-(--color-border-app) px-5 py-3 text-sm leading-relaxed " +
             (notice.ok
               ? "text-emerald-600 dark:text-emerald-400"
               : "text-red-600 dark:text-red-400")
@@ -185,7 +185,7 @@ export function AddressManager({
       {editing && (
         <form
           onSubmit={onSubmit}
-          className="border-b border-[--color-border-app] p-5"
+          className="border-b border-(--color-border-app) p-5"
           /**
            * حقول غير مضبوطة: defaultValue لا يُقرأ إلا عند أول رسم، فبدون
            * مفتاح مختلف لكل عنوان يبقى النموذج معبّأً ببيانات العنوان السابق.
@@ -239,7 +239,7 @@ export function AddressManager({
           />
         </div>
       ) : (
-        <ul className="divide-y divide-[--color-border-app]">
+        <ul className="divide-y divide-(--color-border-app)">
           {addresses.map((a) => (
             <li key={a.id} className="p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -309,7 +309,7 @@ export function AddressManager({
       )}
 
       {addresses.length > 0 && (
-        <p className="border-t border-[--color-border-app] px-5 py-3 text-xs leading-relaxed text-ink-500">
+        <p className="border-t border-(--color-border-app) px-5 py-3 text-xs leading-relaxed text-ink-500">
           {labels.addressInUse}
         </p>
       )}

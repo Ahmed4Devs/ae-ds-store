@@ -184,10 +184,10 @@ export default async function OrderDetailPage(
         )}
 
         <Card className="mb-6 overflow-hidden">
-          <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
+          <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
             {t.orders.products}
           </p>
-          <ul className="divide-y divide-[--color-border-app]">
+          <ul className="divide-y divide-(--color-border-app)">
             {order.items.map((it) => (
               <li key={it.id} className="flex gap-4 p-4">
                 <span className="size-16 shrink-0 overflow-hidden rounded-lg bg-ink-100 dark:bg-ink-800">
@@ -226,7 +226,7 @@ export default async function OrderDetailPage(
           <Card className="p-5">
             <p className="mb-3 font-semibold">{t.checkout.shippingAddress}</p>
             <address className="space-y-1 text-sm not-italic leading-relaxed text-ink-600 dark:text-ink-300">
-              <p className="font-medium text-[--color-foreground]">{addr.fullName}</p>
+              <p className="font-medium text-(--color-foreground)">{addr.fullName}</p>
               <p dir="ltr" className="nums">
                 {formatSaudiPhone(addr.phone)}
               </p>
@@ -260,7 +260,7 @@ export default async function OrderDetailPage(
                 <dt className="text-ink-500">{t.cart.vat}</dt>
                 <dd className="nums">{formatSar(Number(order.vatSar), locale)}</dd>
               </div>
-              <div className="flex justify-between border-t border-[--color-border-app] pt-2 font-bold">
+              <div className="flex justify-between border-t border-(--color-border-app) pt-2 font-bold">
                 <dt>{t.cart.total}</dt>
                 <dd className="nums">{formatSar(Number(order.totalSar), locale)}</dd>
               </div>

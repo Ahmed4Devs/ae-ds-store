@@ -63,7 +63,7 @@ export default async function CollectionPage(
                 {page > 1 && (
                   <Link
                     href={href(page - 1)}
-                    className="rounded-lg border border-[--color-border-app] px-4 py-2 text-sm hover:border-brand-400"
+                    className="rounded-lg border border-(--color-border-app) px-4 py-2 text-sm hover:border-brand-400"
                   >
                     {t.common.previous}
                   </Link>
@@ -74,7 +74,7 @@ export default async function CollectionPage(
                 {page < totalPages && (
                   <Link
                     href={href(page + 1)}
-                    className="rounded-lg border border-[--color-border-app] px-4 py-2 text-sm hover:border-brand-400"
+                    className="rounded-lg border border-(--color-border-app) px-4 py-2 text-sm hover:border-brand-400"
                   >
                     {t.common.next}
                   </Link>

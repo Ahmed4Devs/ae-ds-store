@@ -104,7 +104,7 @@ export function AddToCartForm({
                     out && "cursor-not-allowed opacity-40 line-through",
                     s.skuAttr === skuAttr
                       ? "border-brand-600 bg-brand-50 font-medium text-brand-800 dark:bg-brand-900/30 dark:text-brand-200"
-                      : "border-[--color-border-app] hover:border-brand-400",
+                      : "border-(--color-border-app) hover:border-brand-400",
                   )}
                 >
                   {s.label}
@@ -147,7 +147,7 @@ export function AddToCartForm({
                   "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition",
                   o.code === selectedShip?.code
                     ? "border-brand-600 bg-brand-50 dark:bg-brand-900/20"
-                    : "border-[--color-border-app] hover:border-brand-400",
+                    : "border-(--color-border-app) hover:border-brand-400",
                 )}
               >
                 <input
@@ -187,7 +187,7 @@ export function AddToCartForm({
       <div className="flex items-end gap-3">
         <div>
           <p className="mb-2 text-sm font-medium">{labels.quantity}</p>
-          <div className="flex items-center rounded-lg border border-[--color-border-app]">
+          <div className="flex items-center rounded-lg border border-(--color-border-app)">
             <button
               type="button"
               aria-label={labels.decrease}
@@ -213,7 +213,7 @@ export function AddToCartForm({
         </Button>
       </div>
 
-      <div className="rounded-lg bg-[--color-surface] p-4 text-sm">
+      <div className="rounded-lg bg-(--color-surface) p-4 text-sm">
         <div className="flex justify-between">
           <span className="text-ink-500">{fill(labels.lineProduct, { n: qty })}</span>
           <span className="nums">
@@ -230,7 +230,7 @@ export function AddToCartForm({
                 : formatSar(selectedShip.feeSar, locale)}
           </span>
         </div>
-        <p className="mt-3 border-t border-[--color-border-app] pt-3 text-xs text-ink-500">
+        <p className="mt-3 border-t border-(--color-border-app) pt-3 text-xs text-ink-500">
           {labels.totalNote}
         </p>
       </div>

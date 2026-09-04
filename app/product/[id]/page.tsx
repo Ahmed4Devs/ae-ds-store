@@ -94,7 +94,7 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">
         <div className="grid gap-10 lg:grid-cols-2">
           <div>
-            <div className="overflow-hidden rounded-xl border border-[--color-border-app] bg-ink-100 dark:bg-ink-800">
+            <div className="overflow-hidden rounded-xl border border-(--color-border-app) bg-ink-100 dark:bg-ink-800">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={product.imageUrls[0]}
@@ -110,7 +110,7 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
                     key={i}
                     src={url}
                     alt=""
-                    className="aspect-square rounded-lg border border-[--color-border-app] object-cover"
+                    className="aspect-square rounded-lg border border-(--color-border-app) object-cover"
                   />
                 ))}
               </div>
@@ -198,10 +198,10 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
 
             {product.properties.length > 0 && (
               <Card className="mt-8 overflow-hidden">
-                <p className="border-b border-[--color-border-app] px-4 py-3 font-semibold">
+                <p className="border-b border-(--color-border-app) px-4 py-3 font-semibold">
                   {t.product.specs}
                 </p>
-                <dl className="divide-y divide-[--color-border-app]">
+                <dl className="divide-y divide-(--color-border-app)">
                   {product.properties.map((p, i) => (
                     <div key={i} className="flex gap-4 px-4 py-2.5 text-sm">
                       <dt className="w-40 shrink-0 text-ink-500">{p.name}</dt>

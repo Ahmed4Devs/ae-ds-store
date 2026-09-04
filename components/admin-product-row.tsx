@@ -100,7 +100,7 @@ export function AdminProductRow({
   }
 
   return (
-    <tr className="hover:bg-[--color-background]">
+    <tr className="hover:bg-(--color-background)">
       <td className="px-5 py-3">
         <div className="flex items-center gap-3">
           <span className="size-12 shrink-0 overflow-hidden rounded-lg bg-ink-100 dark:bg-ink-800">

@@ -81,7 +81,7 @@ export function OrderTracking({
             type="button"
             onClick={() => void refetch()}
             disabled={isFetching}
-            className="rounded-lg border border-[--color-border-app] px-2.5 py-1 transition hover:border-brand-400 disabled:opacity-50"
+            className="rounded-lg border border-(--color-border-app) px-2.5 py-1 transition hover:border-brand-400 disabled:opacity-50"
           >
             {labels.refreshNow}
           </button>
@@ -109,7 +109,7 @@ export function OrderTracking({
                 <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
                   <span className="text-ink-500">{labels.trackingNumber}</span>
                   <code
-                    className="nums rounded bg-[--color-background] px-2 py-1 font-mono text-xs"
+                    className="nums rounded bg-(--color-background) px-2 py-1 font-mono text-xs"
                     dir="ltr"
                   >
                     {pkg.mailNo}
@@ -136,12 +136,12 @@ export function OrderTracking({
                   </p>
                 )}
 
-                <ol className="relative space-y-4 border-[--color-border-app] ps-5 ltr:border-l-2 rtl:border-r-2">
+                <ol className="relative space-y-4 border-(--color-border-app) ps-5 ltr:border-l-2 rtl:border-r-2">
                   {pkg.nodes.map((n, i) => (
                     <li key={`${n.at}-${i}`} className="relative">
                       <span
                         className={
-                          "absolute top-1 size-3 rounded-full ring-4 ring-[--color-surface] ltr:-left-[27px] rtl:-right-[27px] " +
+                          "absolute top-1 size-3 rounded-full ring-4 ring-(--color-surface) ltr:-left-[27px] rtl:-right-[27px] " +
                           (i === 0 ? "bg-brand-600" : "bg-ink-300 dark:bg-ink-600")
                         }
                       />

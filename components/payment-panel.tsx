@@ -85,7 +85,7 @@ export function PaymentPanel({
         </Alert>
 
         {providerRef ? (
-          <div className="rounded-lg border border-[--color-border-app] bg-[--color-surface] p-4">
+          <div className="rounded-lg border border-(--color-border-app) bg-(--color-surface) p-4">
             <p className="text-sm text-ink-500">{labels.reference}</p>
             <p className="nums mt-1 font-mono text-sm font-semibold" dir="ltr">
               {providerRef}

@@ -107,7 +107,7 @@ function CartLineRow({
         )}
 
         <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="flex items-center rounded-lg border border-[--color-border-app]">
+          <div className="flex items-center rounded-lg border border-(--color-border-app)">
             <button
               type="button"
               aria-label={labels.decrease}

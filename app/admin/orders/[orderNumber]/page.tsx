@@ -138,10 +138,10 @@ export default async function AdminOrderPage(
         <div className="space-y-6 lg:col-span-2">
           {/* المنتجات */}
           <Card className="overflow-hidden">
-            <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
+            <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
               {t.orders.products}
             </p>
-            <ul className="divide-y divide-[--color-border-app]">
+            <ul className="divide-y divide-(--color-border-app)">
               {order.items.map((it) => (
                 <li key={it.id} className="p-4">
                   <div className="flex gap-4">
@@ -190,7 +190,7 @@ export default async function AdminOrderPage(
 
           {/* طلبيات AliExpress */}
           <Card className="overflow-hidden">
-            <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
+            <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
               {t.admin.aeOrders}
               <span className="ms-2 text-xs font-normal text-ink-500">
                 {t.admin.aeOrdersNote}
@@ -199,11 +199,11 @@ export default async function AdminOrderPage(
             {order.aeOrders.length === 0 ? (
               <p className="p-5 text-sm text-ink-500">{t.admin.notSourced}</p>
             ) : (
-              <ul className="divide-y divide-[--color-border-app]">
+              <ul className="divide-y divide-(--color-border-app)">
                 {order.aeOrders.map((ae) => (
                   <li key={ae.id} className="p-4 text-sm">
                     <div className="flex flex-wrap items-center gap-3">
-                      <code className="rounded bg-[--color-background] px-2 py-1 font-mono text-xs nums" dir="ltr">
+                      <code className="rounded bg-(--color-background) px-2 py-1 font-mono text-xs nums" dir="ltr">
                         {ae.aeOrderId}
                       </code>
                       {ae.aeOrderStatus && <Badge tone="info">{ae.aeOrderStatus}</Badge>}
@@ -240,7 +240,7 @@ export default async function AdminOrderPage(
 
           {/* محاولات الدفع */}
           <Card className="overflow-hidden">
-            <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
+            <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
               {t.admin.paymentIntents}
             </p>
             {order.payments.length === 0 ? (
@@ -248,7 +248,7 @@ export default async function AdminOrderPage(
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="border-b border-[--color-border-app] text-xs text-ink-500">
+                  <thead className="border-b border-(--color-border-app) text-xs text-ink-500">
                     <tr>
                       <th className="px-4 py-2 text-start font-medium">
                         {t.admin.colProvider}
@@ -267,7 +267,7 @@ export default async function AdminOrderPage(
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-[--color-border-app]">
+                  <tbody className="divide-y divide-(--color-border-app)">
                     {order.payments.map((p) => (
                       <tr key={p.id}>
                         <td className="px-4 py-2">{p.provider}</td>
@@ -297,13 +297,13 @@ export default async function AdminOrderPage(
 
           {/* سجل الاستدعاءات */}
           <Card className="overflow-hidden">
-            <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
+            <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
               {t.admin.apiCallLog}
             </p>
             {logs.length === 0 ? (
               <p className="p-5 text-sm text-ink-500">{t.admin.noLogs}</p>
             ) : (
-              <ul className="divide-y divide-[--color-border-app] text-sm">
+              <ul className="divide-y divide-(--color-border-app) text-sm">
                 {logs.map((l) => (
                   <li key={l.id} className="flex flex-wrap items-center gap-3 p-3">
                     <Badge tone={l.success ? "success" : "danger"}>
@@ -340,7 +340,7 @@ export default async function AdminOrderPage(
                 value={formatSar(margin)}
                 tone={margin >= 0 ? "success" : "danger"}
               />
-              <div className="border-t border-[--color-border-app] pt-2">
+              <div className="border-t border-(--color-border-app) pt-2">
                 <Row
                   label={t.admin.fxLocked}
                   value={Number(order.fxRateUsed).toFixed(4)}
@@ -370,7 +370,7 @@ export default async function AdminOrderPage(
           <Card className="p-5">
             <p className="mb-3 font-semibold">{t.checkout.shippingAddress}</p>
             <address className="space-y-1 text-sm not-italic leading-relaxed text-ink-600 dark:text-ink-300">
-              <p className="font-medium text-[--color-foreground]">{addr.fullName}</p>
+              <p className="font-medium text-(--color-foreground)">{addr.fullName}</p>
               <p dir="ltr" className="text-right nums">{formatSaudiPhone(addr.phone)}</p>
               <p>{addr.addressLine1}</p>
               {addr.addressLine2 && <p>{addr.addressLine2}</p>}
@@ -389,7 +389,7 @@ export default async function AdminOrderPage(
 
           <Card className="p-5">
             <p className="mb-2 font-semibold">{t.admin.idempotencyKey}</p>
-            <code className="block break-all rounded bg-[--color-background] p-2 font-mono text-xs" dir="ltr">
+            <code className="block break-all rounded bg-(--color-background) p-2 font-mono text-xs" dir="ltr">
               {order.outOrderId}
             </code>
             <p className="mt-2 text-xs leading-relaxed text-ink-500">

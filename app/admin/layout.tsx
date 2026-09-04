@@ -20,7 +20,7 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="border-b border-[--color-border-app] bg-[--color-surface]">
+      <header className="border-b border-(--color-border-app) bg-(--color-surface)">
         <div className="mx-auto flex h-14 max-w-7xl items-center gap-6 px-4">
           <Link href="/admin" className="font-bold">
             {t.nav.admin}

@@ -28,8 +28,8 @@ export default function Loading() {
 
       {/* مساحة العنوان */}
       <div className="mb-6 animate-pulse space-y-3">
-        <div className="h-7 w-56 rounded-lg bg-[--color-surface]" />
-        <div className="h-4 w-32 rounded bg-[--color-surface]" />
+        <div className="h-7 w-56 rounded-lg bg-(--color-surface)" />
+        <div className="h-4 w-32 rounded bg-(--color-surface)" />
       </div>
 
       {/* شبكة البطاقات — نفس أعمدة ProductGrid */}
@@ -37,7 +37,7 @@ export default function Loading() {
         {Array.from({ length: 8 }, (_, i) => (
           <div
             key={i}
-            className="animate-pulse overflow-hidden rounded-xl border border-[--color-border-app] bg-[--color-surface]"
+            className="animate-pulse overflow-hidden rounded-xl border border-(--color-border-app) bg-(--color-surface)"
             aria-hidden="true"
           >
             <div className="aspect-square w-full bg-ink-100 dark:bg-ink-800" />

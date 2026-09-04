@@ -59,7 +59,7 @@ export default async function HomePage() {
                 <Link
                   key={c.categoryId}
                   href={`/search?category=${c.categoryId}`}
-                  className="rounded-full border border-[--color-border-app] bg-[--color-surface] px-4 py-2 text-sm transition hover:border-brand-500 hover:text-brand-700"
+                  className="rounded-full border border-(--color-border-app) bg-(--color-surface) px-4 py-2 text-sm transition hover:border-brand-500 hover:text-brand-700"
                 >
                   {c.categoryName}
                 </Link>

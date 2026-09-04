@@ -54,12 +54,12 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
 
       {perApi.size > 0 && (
         <Card className="mb-6 overflow-hidden">
-          <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
+          <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
             {t.admin.perApiSummary}
           </p>
           <div className="overflow-x-auto scroll-thin">
             <table className="w-full text-sm">
-              <thead className="bg-[--color-background] text-xs text-ink-500">
+              <thead className="bg-(--color-background) text-xs text-ink-500">
                 <tr>
                   <th className="px-4 py-2.5 text-right font-medium">{t.admin.colApi}</th>
                   <th className="px-4 py-2.5 text-right font-medium">{t.admin.colSuccess}</th>
@@ -67,7 +67,7 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
                   <th className="px-4 py-2.5 text-right font-medium">{t.admin.colAvgTime}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[--color-border-app]">
+              <tbody className="divide-y divide-(--color-border-app)">
                 {[...perApi.entries()].map(([api, s]) => (
                   <tr key={api}>
                     <td className="px-4 py-2.5">
@@ -100,7 +100,7 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
             "rounded-full border px-3.5 py-1.5 text-sm " +
             (!onlyFailed
               ? "border-brand-600 bg-brand-600 text-white"
-              : "border-[--color-border-app] hover:border-brand-400")
+              : "border-(--color-border-app) hover:border-brand-400")
           }
         >
           {t.common.all}
@@ -111,7 +111,7 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
             "rounded-full border px-3.5 py-1.5 text-sm " +
             (onlyFailed
               ? "border-brand-600 bg-brand-600 text-white"
-              : "border-[--color-border-app] hover:border-brand-400")
+              : "border-(--color-border-app) hover:border-brand-400")
           }
         >
           {t.admin.onlyFailed}
@@ -122,7 +122,7 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
         <EmptyState title={t.admin.noLogs} />
       ) : (
         <Card className="overflow-hidden">
-          <ul className="divide-y divide-[--color-border-app] text-sm">
+          <ul className="divide-y divide-(--color-border-app) text-sm">
             {logs.map((l) => (
               <li key={l.id} className="flex flex-wrap items-center gap-3 p-3">
                 <Badge tone={l.success ? "success" : "danger"}>

@@ -137,7 +137,7 @@ export default async function PolicyPage(props: PageProps<"/policies/[slug]">) {
           </p>
         </Card>
 
-        <nav className="mt-10 border-t border-[--color-border-app] pt-6">
+        <nav className="mt-10 border-t border-(--color-border-app) pt-6">
           <p className="mb-3 text-sm font-semibold">{t.policies.title}</p>
           <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink-500">
             {others.map((other) => (

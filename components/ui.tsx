@@ -16,7 +16,7 @@ const buttonVariants = {
   secondary:
     "bg-ink-100 text-ink-900 hover:bg-ink-200 dark:bg-ink-800 dark:text-ink-100 dark:hover:bg-ink-700",
   outline:
-    "border border-[--color-border-app] hover:bg-ink-50 dark:hover:bg-ink-800",
+    "border border-(--color-border-app) hover:bg-ink-50 dark:hover:bg-ink-800",
   ghost: "hover:bg-ink-100 dark:hover:bg-ink-800",
   danger: "bg-red-600 text-white hover:bg-red-700",
 } as const;
@@ -71,7 +71,7 @@ export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       className={cx(
-        "rounded-xl border border-[--color-border-app] bg-[--color-surface]",
+        "rounded-xl border border-(--color-border-app) bg-(--color-surface)",
         className,
       )}
       {...props}
@@ -114,7 +114,7 @@ export function Field({
 }
 
 const inputBase =
-  "w-full rounded-lg border border-[--color-border-app] bg-[--color-background] px-3 h-11 text-sm outline-none focus:border-brand-500";
+  "w-full rounded-lg border border-(--color-border-app) bg-(--color-background) px-3 h-11 text-sm outline-none focus:border-brand-500";
 
 export function Input({ className, ...props }: ComponentProps<"input">) {
   return <input className={cx(inputBase, className)} {...props} />;
@@ -200,7 +200,7 @@ export function EmptyState({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[--color-border-app] py-16 text-center">
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-(--color-border-app) py-16 text-center">
       <p className="text-lg font-semibold">{title}</p>
       {description && (
         <p className="mt-1 max-w-md text-sm text-ink-500">{description}</p>

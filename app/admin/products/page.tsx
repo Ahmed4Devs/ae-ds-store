@@ -109,7 +109,7 @@ export default async function AdminProductsPage(
           defaultValue={q}
           placeholder={t.admin.productSearch}
           aria-label={t.admin.productSearch}
-          className="h-11 w-full max-w-md rounded-lg border border-[--color-border-app] bg-[--color-background] px-3 text-sm outline-none focus:border-brand-500"
+          className="h-11 w-full max-w-md rounded-lg border border-(--color-border-app) bg-(--color-background) px-3 text-sm outline-none focus:border-brand-500"
         />
       </form>
 
@@ -122,7 +122,7 @@ export default async function AdminProductsPage(
         <Card className="overflow-hidden">
           <div className="overflow-x-auto scroll-thin">
             <table className="w-full text-sm">
-              <thead className="bg-[--color-background] text-xs text-ink-500">
+              <thead className="bg-(--color-background) text-xs text-ink-500">
                 <tr>
                   <th className="px-5 py-2.5 text-right font-medium">
                     {t.admin.colProduct}
@@ -144,7 +144,7 @@ export default async function AdminProductsPage(
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[--color-border-app]">
+              <tbody className="divide-y divide-(--color-border-app)">
                 {rows.map((p) => (
                   <AdminProductRow
                     key={p.id}

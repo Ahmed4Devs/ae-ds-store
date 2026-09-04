@@ -87,14 +87,14 @@ export default async function CartPage() {
                   <dt className="text-ink-500">{t.cart.vat}</dt>
                   <dd className="nums">{formatSar(summary.vatSar, locale)}</dd>
                 </div>
-                <div className="flex justify-between border-t border-[--color-border-app] pt-3 text-base font-bold">
+                <div className="flex justify-between border-t border-(--color-border-app) pt-3 text-base font-bold">
                   <dt>{t.cart.total}</dt>
                   <dd className="nums">{formatSar(summary.totalSar, locale)}</dd>
                 </div>
               </dl>
 
               {summary.maxDeliveryDays != null && (
-                <p className="mt-4 rounded-lg bg-[--color-background] p-3 text-xs leading-relaxed text-ink-500">
+                <p className="mt-4 rounded-lg bg-(--color-background) p-3 text-xs leading-relaxed text-ink-500">
                   {fill(t.cart.deliveryNote, { n: summary.maxDeliveryDays })}
                 </p>
               )}

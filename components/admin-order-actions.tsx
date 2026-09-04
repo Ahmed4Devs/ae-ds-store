@@ -83,7 +83,7 @@ export function AdminOrderActions({
       )}
 
       {open && (
-        <div className="w-full max-w-md rounded-lg border border-[--color-border-app] bg-[--color-surface] p-4 text-start">
+        <div className="w-full max-w-md rounded-lg border border-(--color-border-app) bg-(--color-surface) p-4 text-start">
           <p className="font-semibold">{labels.cancelTitle}</p>
           <p className="mt-1 text-xs leading-relaxed text-ink-500">
             {labels.cancelBody}

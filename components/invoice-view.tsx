@@ -134,7 +134,7 @@ export function InvoiceView({
 
       <Card className="inv-sheet p-6 sm:p-8">
         {/* ترويسة المستند */}
-        <div className="inv-rule mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-[--color-border-app] pb-5">
+        <div className="inv-rule mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-(--color-border-app) pb-5">
           <div>
             <h1 className="text-xl font-bold">{labels.heading}</h1>
             <p className="inv-note mt-1 text-xs text-ink-500">{labels.currencyNote}</p>
@@ -189,7 +189,7 @@ export function InvoiceView({
         </div>
 
         {/* عنوان الشحن */}
-        <section className="inv-box mb-6 rounded-lg border border-[--color-border-app] p-4">
+        <section className="inv-box mb-6 rounded-lg border border-(--color-border-app) p-4">
           <h2 className="inv-note mb-2 text-xs font-semibold uppercase text-ink-500">
             {labels.shipTo}
           </h2>
@@ -211,7 +211,7 @@ export function InvoiceView({
           <div className="overflow-x-auto">
             <table className="inv-table w-full min-w-[28rem] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-[--color-border-app] text-start">
+                <tr className="border-b border-(--color-border-app) text-start">
                   <th className="py-2 pe-3 text-start font-semibold">
                     {labels.colDescription}
                   </th>
@@ -228,7 +228,7 @@ export function InvoiceView({
               </thead>
               <tbody>
                 {lines.map((line) => (
-                  <tr key={line.id} className="border-b border-[--color-border-app]">
+                  <tr key={line.id} className="border-b border-(--color-border-app)">
                     <td className="py-2.5 pe-3 align-top">
                       <span>{line.title}</span>
                       {line.variantLabel && (
@@ -270,7 +270,7 @@ export function InvoiceView({
               </dt>
               <dd className="nums">{formatSar(vatSar, locale)}</dd>
             </div>
-            <div className="inv-rule flex justify-between border-t border-[--color-border-app] pt-2 text-base font-bold">
+            <div className="inv-rule flex justify-between border-t border-(--color-border-app) pt-2 text-base font-bold">
               <dt>{labels.total}</dt>
               <dd className="nums">{formatSar(totalSar, locale)}</dd>
             </div>
@@ -278,7 +278,7 @@ export function InvoiceView({
         </section>
 
         {/* رمز الاستجابة السريعة أو تحذير غياب الرقم الضريبي */}
-        <section className="inv-qr inv-rule border-t border-[--color-border-app] pt-5">
+        <section className="inv-qr inv-rule border-t border-(--color-border-app) pt-5">
           {qrDataUrl ? (
             <div className="flex flex-wrap items-center gap-5">
               {/* eslint-disable-next-line @next/next/no-img-element */}

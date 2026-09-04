@@ -76,7 +76,7 @@ export default async function SearchPage(props: PageProps<"/search">) {
                   "rounded-full border px-3.5 py-1.5 text-sm transition " +
                   (sort === s.value
                     ? "border-brand-600 bg-brand-600 text-white"
-                    : "border-[--color-border-app] hover:border-brand-400")
+                    : "border-(--color-border-app) hover:border-brand-400")
                 }
               >
                 {s.label}
@@ -100,7 +100,7 @@ export default async function SearchPage(props: PageProps<"/search">) {
                 {page > 1 && (
                   <Link
                     href={buildHref({ page: page - 1 })}
-                    className="rounded-lg border border-[--color-border-app] px-4 py-2 text-sm hover:border-brand-400"
+                    className="rounded-lg border border-(--color-border-app) px-4 py-2 text-sm hover:border-brand-400"
                   >
                     {t.common.previous}
                   </Link>
@@ -111,7 +111,7 @@ export default async function SearchPage(props: PageProps<"/search">) {
                 {page < totalPages && (
                   <Link
                     href={buildHref({ page: page + 1 })}
-                    className="rounded-lg border border-[--color-border-app] px-4 py-2 text-sm hover:border-brand-400"
+                    className="rounded-lg border border-(--color-border-app) px-4 py-2 text-sm hover:border-brand-400"
                   >
                     {t.common.next}
                   </Link>

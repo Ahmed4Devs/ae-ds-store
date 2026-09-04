@@ -121,7 +121,7 @@ export default async function AdminHome() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[--color-border-app] px-5 py-3">
+        <div className="flex items-center justify-between border-b border-(--color-border-app) px-5 py-3">
           <p className="font-semibold">{t.admin.recentOrders}</p>
           <Link href="/admin/orders" className="text-sm text-brand-600 hover:underline">
             {t.home.viewAll}
@@ -133,7 +133,7 @@ export default async function AdminHome() {
         ) : (
           <div className="overflow-x-auto scroll-thin">
             <table className="w-full text-sm">
-              <thead className="bg-[--color-background] text-xs text-ink-500">
+              <thead className="bg-(--color-background) text-xs text-ink-500">
                 <tr>
                   <th className="px-5 py-2.5 text-right font-medium">{t.admin.colOrderNumber}</th>
                   <th className="px-5 py-2.5 text-right font-medium">{t.admin.colDate}</th>
@@ -143,9 +143,9 @@ export default async function AdminHome() {
                   <th className="px-5 py-2.5 text-right font-medium">{t.admin.colStatus}</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[--color-border-app]">
+              <tbody className="divide-y divide-(--color-border-app)">
                 {recentOrders.map((o) => (
-                  <tr key={o.id} className="hover:bg-[--color-background]">
+                  <tr key={o.id} className="hover:bg-(--color-background)">
                     <td className="px-5 py-3">
                       <Link
                         href={`/admin/orders/${o.orderNumber}`}

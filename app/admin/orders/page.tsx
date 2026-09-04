@@ -116,7 +116,7 @@ export default async function AdminOrdersPage(
             "rounded-full border px-3.5 py-1.5 text-sm " +
             (!status
               ? "border-brand-600 bg-brand-600 text-white"
-              : "border-[--color-border-app] hover:border-brand-400")
+              : "border-(--color-border-app) hover:border-brand-400")
           }
         >
           {t.common.all}
@@ -129,7 +129,7 @@ export default async function AdminOrdersPage(
               "rounded-full border px-3.5 py-1.5 text-sm " +
               (status === s
                 ? "border-brand-600 bg-brand-600 text-white"
-                : "border-[--color-border-app] hover:border-brand-400")
+                : "border-(--color-border-app) hover:border-brand-400")
             }
           >
             {orderStatusLabel(s, t.orders.status)}

@@ -90,7 +90,7 @@ export default async function OrdersPage() {
                     {o.items.slice(0, 4).map((it, i) => (
                       <span
                         key={i}
-                        className="size-11 overflow-hidden rounded-lg border border-[--color-border-app] bg-ink-100 dark:bg-ink-800"
+                        className="size-11 overflow-hidden rounded-lg border border-(--color-border-app) bg-ink-100 dark:bg-ink-800"
                       >
                         {it.imageSnapshot && (
                           // eslint-disable-next-line @next/next/no-img-element

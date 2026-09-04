@@ -27,7 +27,7 @@ export async function SiteHeader() {
         </AnnouncementBar>
       )}
 
-      <header className="sticky top-0 z-40 border-b border-[--color-border-app] bg-[--color-background]/85 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-(--color-border-app) bg-(--color-background)/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4">
           <Link href="/" className="flex shrink-0 items-center gap-2 text-lg font-bold">
             <span className="grid size-9 place-items-center rounded-lg bg-brand-600 text-white">
@@ -43,7 +43,7 @@ export async function SiteHeader() {
                 type="search"
                 placeholder={t.nav.search}
                 aria-label={t.nav.searchLabel}
-                className="h-10 w-full rounded-full border border-[--color-border-app] bg-[--color-surface] px-4 text-sm outline-none focus:border-brand-500 ltr:pr-11 rtl:pl-11"
+                className="h-10 w-full rounded-full border border-(--color-border-app) bg-(--color-surface) px-4 text-sm outline-none focus:border-brand-500 ltr:pr-11 rtl:pl-11"
               />
               <button
                 type="submit"
@@ -110,7 +110,7 @@ export async function SiteHeader() {
         </div>
 
         {/* التفضيلات على الشاشات الصغيرة */}
-        <div className="flex items-center justify-center gap-2 border-t border-[--color-border-app] px-4 py-2 md:hidden">
+        <div className="flex items-center justify-center gap-2 border-t border-(--color-border-app) px-4 py-2 md:hidden">
           <ThemeToggle
             current={theme}
             labels={{
@@ -131,7 +131,7 @@ export async function SiteFooter() {
   const t = await getDictionary();
 
   return (
-    <footer className="mt-auto border-t border-[--color-border-app] bg-[--color-surface]">
+    <footer className="mt-auto border-t border-(--color-border-app) bg-(--color-surface)">
       <div className="mx-auto max-w-7xl px-4 py-10 text-sm">
         <div className="grid gap-8 sm:grid-cols-3">
           <div>
@@ -180,7 +180,7 @@ export async function SiteFooter() {
             <p className="leading-relaxed text-ink-500">{t.footer.noticeBody}</p>
           </div>
         </div>
-        <p className="mt-8 border-t border-[--color-border-app] pt-5 text-xs text-ink-500">
+        <p className="mt-8 border-t border-(--color-border-app) pt-5 text-xs text-ink-500">
           {fill(t.footer.rights, { year: new Date().getFullYear() })}
         </p>
       </div>

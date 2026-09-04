@@ -75,7 +75,7 @@ export default async function AdminSettingsPage() {
           </p>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <div className="rounded-lg border border-[--color-border-app] p-4">
+            <div className="rounded-lg border border-(--color-border-app) p-4">
               <p className="text-xs text-ink-500">{t.admin.fxCurrent}</p>
               <p className="nums mt-1 text-2xl font-bold">
                 {rate.toFixed(4)}{" "}
@@ -84,7 +84,7 @@ export default async function AdminSettingsPage() {
                 </span>
               </p>
             </div>
-            <div className="rounded-lg border border-[--color-border-app] p-4">
+            <div className="rounded-lg border border-(--color-border-app) p-4">
               <p className="text-xs text-ink-500">{t.admin.fxEffective}</p>
               <p className="nums mt-1 text-2xl font-bold">
                 {effective.toFixed(4)}{" "}
@@ -112,7 +112,7 @@ export default async function AdminSettingsPage() {
             {history.length === 0 ? (
               <p className="text-sm text-ink-500">{t.admin.fxNoHistory}</p>
             ) : (
-              <ul className="divide-y divide-[--color-border-app] rounded-lg border border-[--color-border-app]">
+              <ul className="divide-y divide-(--color-border-app) rounded-lg border border-(--color-border-app)">
                 {history.map((h, i) => (
                   <li
                     key={`${h.createdAt.toISOString()}-${i}`}
@@ -157,7 +157,7 @@ export default async function AdminSettingsPage() {
             {t.admin.cronBody}
           </p>
 
-          <p className="nums mt-4 rounded-lg bg-[--color-background] px-3 py-2 text-sm" dir="ltr">
+          <p className="nums mt-4 rounded-lg bg-(--color-background) px-3 py-2 text-sm" dir="ltr">
             {cronPath}
           </p>
 

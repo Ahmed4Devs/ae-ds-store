@@ -61,7 +61,7 @@ export function AdminOrdersTable({
         <Card className="overflow-hidden">
           <div className="scroll-thin overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-[--color-background] text-xs text-ink-500">
+              <thead className="bg-(--color-background) text-xs text-ink-500">
                 <tr>
                   <th className="px-4 py-2.5 text-start font-medium">
                     {labels.colOrderNumber}
@@ -83,9 +83,9 @@ export function AdminOrdersTable({
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[--color-border-app]">
+              <tbody className="divide-y divide-(--color-border-app)">
                 {rows.map((o) => (
-                  <tr key={o.id} className="hover:bg-[--color-background]">
+                  <tr key={o.id} className="hover:bg-(--color-background)">
                     <td className="px-4 py-3">
                       <Link
                         href={`/admin/orders/${o.orderNumber}`}
