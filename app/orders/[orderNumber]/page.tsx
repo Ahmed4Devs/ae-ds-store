@@ -1,16 +1,18 @@
 import { notFound } from "next/navigation";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
-import { Alert, Card } from "@/components/ui";
+import { Alert, ButtonLink, Card } from "@/components/ui";
 import { OrderTracking } from "@/components/order-tracking";
+import { CancelOrder } from "@/components/cancel-order";
 import { prisma } from "@/lib/db";
+import { canCancel } from "@/lib/order-cancel";
 import { getCurrentUser } from "@/lib/session";
 import { ownsGuestOrder } from "@/lib/guest-orders";
 import { syncOrderIfStale } from "@/lib/order-sync";
 import { formatSar } from "@/lib/pricing";
 import { formatDateAr, formatSaudiPhone } from "@/lib/ksa";
 import type { ShippingAddress } from "@/lib/ksa";
-import { getDictionary, getLocale } from "@/lib/i18n";
+import { fill, getDictionary, getLocale } from "@/lib/i18n";
 import { getQueryClient } from "@/lib/query/client";
 import { queryKeys } from "@/lib/query/keys";
 import type { OrderTrackingDto, TrackingNodeDto } from "@/lib/query/keys";
@@ -56,6 +58,7 @@ export default async function OrderDetailPage(
     where: { id: order.id },
     select: {
       status: true,
+      cancelledAt: true,
       aeOrders: {
         select: {
           packages: {
@@ -98,6 +101,17 @@ export default async function OrderDetailPage(
 
   const addr = order.shippingSnapshot as unknown as ShippingAddress;
 
+  // الحالة المعتمدة للعرض هي ما بعد المزامنة لا لقطة ما قبلها
+  const status = fresh?.status ?? order.status;
+  const cancelledAt = fresh?.cancelledAt ?? null;
+  const sourcedOnAe = (fresh?.aeOrders ?? []).length > 0;
+
+  // الإلغاء الذاتي متاح ما دامت الطلبية لم تصل إلى المنصة. نتحقّق من غياب
+  // صفوف aeOrder أيضًا لا من الحالة وحدها، حتى لا يُعرض زرّ يرفضه الخادم.
+  const showCancel = canCancel(status) && !sourcedOnAe;
+  // الفاتورة الضريبية لا تُصدر قبل تأكيد الدفع ولا لطلبية ملغاة
+  const showInvoice = status !== "PENDING_PAYMENT" && status !== "CANCELLED";
+
   return (
     <>
       <SiteHeader />
@@ -120,6 +134,32 @@ export default async function OrderDetailPage(
           </p>
         </div>
 
+        {status === "CANCELLED" && (
+          <div className="mb-6">
+            <Alert tone="danger" title={t.orders.cancelledTitle}>
+              <p>{t.orders.cancelledBody}</p>
+              {cancelledAt && (
+                <p className="nums mt-1 text-xs">
+                  {fill(t.orders.cancelledAt, {
+                    date: formatDateAr(cancelledAt, locale),
+                  })}
+                </p>
+              )}
+            </Alert>
+          </div>
+        )}
+
+        {status === "PENDING_PAYMENT" && (
+          <div className="mb-6 space-y-3">
+            <Alert tone="warning" title={t.orders.awaitingPayment}>
+              {t.orders.awaitingPaymentBody}
+            </Alert>
+            <ButtonLink href={`/pay/${orderNumber}`} size="md">
+              {t.orders.payCta}
+            </ButtonLink>
+          </div>
+        )}
+
         <HydrationBoundary state={dehydrate(queryClient)}>
           <OrderTracking
             orderNumber={orderNumber}
@@ -130,6 +170,18 @@ export default async function OrderDetailPage(
             statusLabels={t.orders.status}
           />
         </HydrationBoundary>
+
+        {showInvoice && (
+          <div className="mb-6">
+            <ButtonLink
+              href={`/orders/${orderNumber}/invoice`}
+              variant="outline"
+              size="sm"
+            >
+              {t.orders.invoiceCta}
+            </ButtonLink>
+          </div>
+        )}
 
         <Card className="mb-6 overflow-hidden">
           <p className="border-b border-[--color-border-app] px-5 py-3 font-semibold">
@@ -215,6 +267,22 @@ export default async function OrderDetailPage(
             </dl>
           </Card>
         </div>
+
+        {showCancel && (
+          <CancelOrder
+            orderNumber={order.orderNumber}
+            labels={{
+              cta: t.orders.cancelCta,
+              title: t.orders.cancelTitle,
+              body: t.orders.cancelBody,
+              reason: t.orders.cancelReason,
+              reasonPlaceholder: t.orders.cancelReasonPlaceholder,
+              submit: t.orders.cancelSubmit,
+              submitting: t.orders.cancelling,
+              close: t.common.cancel,
+            }}
+          />
+        )}
       </main>
 
       <SiteFooter />
