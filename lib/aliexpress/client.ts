@@ -2,6 +2,7 @@ import { env } from "@/lib/env";
 import { AeApiError } from "./errors";
 import { currentTimestamp, signRequest } from "./signature";
 import { getMockResponse } from "./mock-data";
+import { getAccessToken, refreshAccessToken } from "./token";
 
 /**
  * ناقل الطلبات إلى منصة AliExpress المفتوحة.
@@ -152,6 +153,33 @@ function extractError(payload: unknown): { code: string; message?: string } | nu
         message: typeof result.error_msg === "string" ? result.error_msg : undefined,
       };
     }
+
+    /**
+     * بعض الواجهات (حساب أجرة الشحن مثلًا) تضع النتيجة في `result.success`
+     * و`result.code` (200 = نجاح) لا في `error_code`. تجاهلهما كان يجعل
+     * فشلًا مثل DELIVERY_INFO_EMPTY يُسجَّل نجاحًا، فتُعاد قائمة شحن فارغة
+     * وتظهر للعميل «تعذّر حساب الشحن» بلا أثر في السجلّ يُعين على التشخيص.
+     */
+    const success = result.success;
+    const isFailure =
+      success === false ||
+      success === "false" ||
+      (typeof result.code !== "undefined" &&
+        String(result.code) !== "0" &&
+        String(result.code) !== "200");
+    if (isFailure) {
+      const code =
+        result.error_code ?? result.code ?? result.msg ?? "ResultError";
+      return {
+        code: String(code),
+        message:
+          typeof result.error_msg === "string"
+            ? result.error_msg
+            : typeof result.msg === "string"
+              ? result.msg
+              : undefined,
+      };
+    }
   }
 
   return null;
@@ -203,107 +231,152 @@ export async function callAe<T = unknown>(
   }
 
   // ---------------------------------------------------------------- live
-  if (requiresAuth && !cfg.AE_ACCESS_TOKEN) {
-    throw new AeApiError({
-      apiName,
-      code: "IllegalAccessToken",
-      message:
-        "AE_ACCESS_TOKEN غير مضبوط، وهذه الواجهة تتطلب تفويضًا وفق التوثيق.",
-    });
-  }
+  /**
+   * محاولة واحدة كاملة: تُبنى المُعاملات وتُوقَّع وتُرسَل.
+   *
+   * مستخلصة في دالة داخلية لأن إعادة المحاولة بعد تجديد التفويض **لا يصحّ
+   * أن تعيد إرسال الحمولة نفسها**: الطابع الزمني ورمز الوصول كلاهما يدخل
+   * في حساب التوقيع، فإعادة البناء شرط لا تحسين.
+   */
+  async function attempt(): Promise<AeCallResult<T>> {
+    const startedAttempt = Date.now();
 
-  // المُعاملات العامة كما ينص التوثيق
-  const params: Record<string, unknown> = {
-    app_key: cfg.AE_APP_KEY,
-    timestamp: currentTimestamp(),
-    sign_method: "sha256",
-    ...businessParams,
-  };
-  if (requiresAuth) {
-    params.access_token = cfg.AE_ACCESS_TOKEN;
-  }
+    // المُعاملات العامة كما ينص التوثيق
+    const params: Record<string, unknown> = {
+      app_key: cfg.AE_APP_KEY,
+      timestamp: currentTimestamp(),
+      sign_method: "sha256",
+      ...businessParams,
+    };
 
-  params.sign = signRequest(apiName, params, cfg.AE_APP_SECRET);
-
-  const body = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) {
-    if (v === undefined || v === null) continue;
-    body.append(k, String(v));
-  }
-
-  const url = `${cfg.AE_API_BASE_URL.replace(/\/$/, "")}/${apiName}`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
-      },
-      body,
-      signal: controller.signal,
-      cache: "no-store",
-    });
-
-    const text = await res.text();
-    let payload: unknown;
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      throw new AeApiError({
-        apiName,
-        code: "InternalError",
-        message: `استجابة غير صالحة (HTTP ${res.status}): ${text.slice(0, 200)}`,
-      });
+    if (requiresAuth) {
+      // الرمز يأتي من المخزن لا من البيئة: البيئة لا تُحدَّث في وقت التشغيل
+      const token = await getAccessToken();
+      if (!token) {
+        throw new AeApiError({
+          apiName,
+          code: "IllegalAccessToken",
+          message:
+            "لا يوجد رمز وصول مخزَّن ولا في البيئة، وهذه الواجهة تتطلب تفويضًا وفق التوثيق.",
+        });
+      }
+      params.access_token = token;
     }
 
-    const durationMs = Date.now() - started;
-    const err = extractError(payload);
+    params.sign = signRequest(apiName, params, cfg.AE_APP_SECRET);
 
-    if (err) {
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null) continue;
+      body.append(k, String(v));
+    }
+
+    // واجهات الرموز تُسمّى بمسار يبدأ بشرطة مائلة (/auth/token/refresh)،
+    // فتوليد الرابط بالوصل المباشر ينتج شرطتين ويردّ الخادم 404.
+    const url = `${cfg.AE_API_BASE_URL.replace(/\/$/, "")}/${apiName.replace(/^\//, "")}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+        },
+        body,
+        signal: controller.signal,
+        cache: "no-store",
+      });
+
+      const text = await res.text();
+      let payload: unknown;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        throw new AeApiError({
+          apiName,
+          code: "InternalError",
+          message: `استجابة غير صالحة (HTTP ${res.status}): ${text.slice(0, 200)}`,
+        });
+      }
+
+      const durationMs = Date.now() - startedAttempt;
+      const err = extractError(payload);
+
+      if (err) {
+        await logCall({
+          apiName,
+          mode: "live",
+          success: false,
+          error: err,
+          durationMs,
+          params,
+          orderId: options.orderId,
+        });
+        throw new AeApiError({ apiName, code: err.code, message: err.message });
+      }
+
       await logCall({
         apiName,
         mode: "live",
-        success: false,
-        error: err,
+        success: true,
         durationMs,
         params,
         orderId: options.orderId,
       });
-      throw new AeApiError({ apiName, code: err.code, message: err.message });
+      return { data: payload as T, mode: "live", durationMs };
+    } catch (e) {
+      if (e instanceof AeApiError) throw e;
+      const durationMs = Date.now() - startedAttempt;
+      const isAbort = e instanceof Error && e.name === "AbortError";
+      const wrapped = new AeApiError({
+        apiName,
+        code: isAbort ? "isp.service-unavailable" : "InternalError",
+        message: e instanceof Error ? e.message : String(e),
+      });
+      await logCall({
+        apiName,
+        mode: "live",
+        success: false,
+        error: { code: wrapped.code, message: wrapped.message },
+        durationMs,
+        params,
+        orderId: options.orderId,
+      });
+      throw wrapped;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  try {
+    return await attempt();
+  } catch (e) {
+    /**
+     * إعادة محاولة واحدة عند خطأ تفويض — ولا أكثر.
+     *
+     * السبب في وجودها: انتهاء رمز الوصول بين استدعاءين أمر طبيعي لا عطل،
+     * وكان يظهر للعميل كفشل توريد يحتاج تدخّلًا يدويًا.
+     *
+     * والسبب في تحديدها بواحدة: خطأ التفويض المتكرّر معناه أن التفويض نفسه
+     * ساقط (انتهى رمز التجديد، أو سُحبت صلاحية التطبيق)، والدوران عليه
+     * يستنزف حصة الاستدعاءات ويعرّض مفتاح التطبيق للحجب. الفشل السريع
+     * هنا أنفع من محاولة لا تنجح.
+     */
+    if (
+      !(e instanceof AeApiError) ||
+      e.errorClass !== "AUTH" ||
+      !requiresAuth ||
+      // واجهة التجديد نفسها لا تُعاد: فشلها هو نفسه سبب الفشل
+      apiName === "/auth/token/refresh"
+    ) {
+      throw e;
     }
 
-    await logCall({
-      apiName,
-      mode: "live",
-      success: true,
-      durationMs,
-      params,
-      orderId: options.orderId,
-    });
-    return { data: payload as T, mode: "live", durationMs };
-  } catch (e) {
-    if (e instanceof AeApiError) throw e;
-    const durationMs = Date.now() - started;
-    const isAbort = e instanceof Error && e.name === "AbortError";
-    const wrapped = new AeApiError({
-      apiName,
-      code: isAbort ? "isp.service-unavailable" : "InternalError",
-      message: e instanceof Error ? e.message : String(e),
-    });
-    await logCall({
-      apiName,
-      mode: "live",
-      success: false,
-      error: { code: wrapped.code, message: wrapped.message },
-      durationMs,
-      params,
-      orderId: options.orderId,
-    });
-    throw wrapped;
-  } finally {
-    clearTimeout(timer);
+    const refreshed = await refreshAccessToken();
+    if (!refreshed.ok) throw e;
+
+    return attempt();
   }
 }
 

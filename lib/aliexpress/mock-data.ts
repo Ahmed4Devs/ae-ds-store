@@ -614,6 +614,35 @@ const HANDLERS: Record<string, (p: Record<string, unknown>) => unknown> = {
     rsp_msg: "success",
     result: "true",
   }),
+
+  /**
+   * تجديد الرمز — المستند 834.
+   *
+   * موجود في المحاكاة حتى يسلك مسارُ التجديد الطريقَ نفسه في الوضعين، فلا
+   * يكون أول اختبار حقيقي له هو لحظة انتهاء الرمز في الإنتاج.
+   */
+  "/auth/token/refresh": (p) => {
+    const presented = String(p.refresh_token ?? "");
+    if (!presented) {
+      return {
+        error_response: {
+          code: "IllegalRefreshToken",
+          msg: "refresh_token مطلوب",
+        },
+      };
+    }
+    const now = Date.now();
+    return {
+      access_token: `mock-access-${presented.slice(-6)}`,
+      refresh_token: presented,
+      expires_in: 86400,
+      refresh_expires_in: 2592000,
+      expire_time: now + 86400 * 1000,
+      refresh_token_valid_time: now + 2592000 * 1000,
+      account_platform: "buyer",
+      account: "mock@example.com",
+    };
+  },
 };
 
 /** تأخير بسيط يحاكي زمن الشبكة حتى تظهر حالات التحميل في الواجهة. */
