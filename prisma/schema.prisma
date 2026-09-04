@@ -118,7 +118,12 @@ model Product {
   sourceCurrency String    @default("USD")
   /// خصائص المنتج كما تعيدها ds.product.get في ae_item_properties
   properties     Json?
+  /// هل يظهر المنتج في الكتالوج المنسَّق (/collection). الافتراضي false:
+  /// لا يُنشر منتج إلا باختيار صريح من الإدارة.
   isPublished    Boolean   @default(false)
+  /// هامش ربح خاص بهذا المنتج يتجاوز DEFAULT_MARGIN_PERCENT.
+  /// null = استخدم الهامش الافتراضي من متغيّرات البيئة.
+  marginPercent  Decimal?  @db.Decimal(5, 2)
   /// آخر مزامنة للسعر والمخزون من AliExpress
   lastSyncedAt   DateTime?
   createdAt      DateTime  @default(now())
@@ -248,9 +253,16 @@ model Order {
 
   notes     String?
   placedAt  DateTime?
+  /// وقت الإلغاء وسببه — تُملأ عند الانتقال إلى CANCELLED
+  cancelledAt  DateTime?
+  cancelReason String?
+  /// الطلبية أُنشئت لدى المورّد لكن بلا معرّفات محليّة (REPEATED_ORDER_ERROR)،
+  /// فتلزم مطابقة يدوية ولا يجوز إلغاؤها ذاتيًا كأنها لم تُشترَ.
+  needsManualReview Boolean @default(false)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  payments PaymentIntent[]
   items    OrderItem[]
   /// طلبية واحدة لدينا قد تنقسم إلى عدة طلبيات على AliExpress
   /// لأن ds.order.create يعيد order_list كمصفوفة
@@ -374,4 +386,97 @@ model FxRate {
   createdAt     DateTime @default(now())
 
   @@index([baseCurrency, quoteCurrency, createdAt])
+}
+
+// ===========================================================================
+//  الدفع
+// ===========================================================================
+
+/// حالة نيّة الدفع لدى المزوّد.
+/// منفصلة عن OrderStatus عمدًا: الطلبية قد تحمل عدة محاولات دفع
+/// (فشلت الأولى فأعاد العميل المحاولة)، وحالة الطلبية تعكس آخر نتيجة فقط.
+enum PaymentStatus {
+  /// أُنشئت وتنتظر إجراءً من العميل (تحويل إلى صفحة المزوّد أو تحويل بنكي)
+  REQUIRES_ACTION
+  /// أُرسلت إلى المزوّد وتنتظر تأكيدًا (تأكيد شبكة مدى، مراجعة احتيال…)
+  PENDING
+  /// نجح الدفع وتأكّد
+  PAID
+  /// رفضها المزوّد
+  FAILED
+  /// انتهت مهلتها قبل الدفع
+  EXPIRED
+  /// أُعيد المبلغ إلى العميل
+  REFUNDED
+}
+
+/// محاولة دفع واحدة لطلبية.
+///
+/// وجودها ضروري لأن الدفع خطوة **خارجية غير متزامنة**: ننشئ النيّة، يغادر
+/// العميل إلى صفحة المزوّد، ثم يعود التأكيد عبر إشعار خادم-إلى-خادم
+/// (webhook) قد يسبق عودة العميل أو يتأخّر عنها. بلا سجلّ مستقلّ لكل محاولة
+/// لا يمكن التوفيق بين الطرفين ولا كشف الدفع المكرّر.
+model PaymentIntent {
+  id      String @id @default(cuid())
+  orderId String
+  /// Restrict لا Cascade: صفّ الدفع هو الرابط الوحيد بعملية حقيقية لدى
+  /// المزوّد (providerRef للاسترداد والنزاع). حذف الطلبية يجب أن يتطلّب
+  /// حسم نيّات الدفع أولًا لا أن يمحوها بصمت مع الطلبية.
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  /// اسم المزوّد كما في PAYMENT_PROVIDER (manual · moyasar · tap)
+  provider String
+  /// معرّف العملية لدى المزوّد — فريد عالميًا حتى لا يُطبَّق إشعار مرتين
+  providerRef String @unique
+  status      PaymentStatus @default(REQUIRES_ACTION)
+
+  /// المبلغ بالريال كما عُرض على العميل، والعملة المرسلة إلى المزوّد
+  amountSar Decimal @db.Decimal(12, 2)
+  currency  String  @default("SAR")
+
+  /// عنوان صفحة الدفع لدى المزوّد إن وُجد
+  checkoutUrl String?
+  /// رمز الفشل ورسالته كما أعادهما المزوّد
+  failureCode    String?
+  failureMessage String?
+
+  /// آخر حمولة إشعار مستلَمة — للتشخيص. تُحجَب منها بيانات البطاقة.
+  lastWebhookPayload Json?
+
+  paidAt    DateTime?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+}
+
+// ===========================================================================
+//  تفويض AliExpress
+// ===========================================================================
+
+/// رمز الوصول الحالي إلى منصة AliExpress.
+///
+/// يُخزَّن في قاعدة البيانات لا في متغيّرات البيئة لأن الرمز **ينتهي ويُجدَّد
+/// في وقت التشغيل**: متغيّر البيئة يُقرأ مرة واحدة عند الإقلاع ولا يمكن
+/// للخادم تحديثه لنفسه، فينقطع التوريد عند أول انتهاء صلاحية.
+/// القيمة في .env تبقى بذرةً أولى تُستورَد مرة واحدة.
+model AeToken {
+  /// صفّ واحد فقط — المفتاح ثابت بقيمة "singleton"
+  id String @id @default("singleton")
+
+  accessToken  String
+  refreshToken String?
+  /// وقت انتهاء رمز الوصول — نجدّده استباقيًا قبله بهامش أمان
+  expiresAt        DateTime?
+  /// وقت انتهاء رمز التجديد نفسه — بعده يلزم تفويض يدوي جديد
+  refreshExpiresAt DateTime?
+
+  /// آخر تجديد ناجح وآخر خطأ تجديد — لتشخيص انقطاع التفويض
+  lastRefreshedAt DateTime?
+  lastError       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
