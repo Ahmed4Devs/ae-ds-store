@@ -7,7 +7,18 @@ import { buildCartSummary } from "@/lib/cart-service";
 import { formatSar } from "@/lib/pricing";
 import { getCurrentUser } from "@/lib/session";
 import { prisma } from "@/lib/db";
+import { activeProvider } from "@/lib/payments";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
+
+/** اسم المزوّد المعروض — القاموس لا يقبل فهرسة حرّة بمفتاح متغيّر. */
+function providerLabel(
+  provider: ReturnType<typeof activeProvider>,
+  t: Awaited<ReturnType<typeof getDictionary>>,
+): string {
+  if (provider === "moyasar") return t.payment.providerMoyasar;
+  if (provider === "tap") return t.payment.providerTap;
+  return t.payment.providerManual;
+}
 
 export async function generateMetadata() {
   const t = await getDictionary();
@@ -124,7 +135,12 @@ export default async function CheckoutPage() {
 
         <div className="mt-6">
           <Alert tone="info" title={t.checkout.paymentTitle}>
-            {t.checkout.paymentBody}
+            <p>{t.checkout.paymentBody}</p>
+            <p className="mt-1.5">
+              {fill(t.checkout.paymentMethodNote, {
+                method: providerLabel(activeProvider(), t),
+              })}
+            </p>
           </Alert>
         </div>
       </main>
