@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getShippingOptions, AeApiError } from "@/lib/aliexpress";
 import { toSar } from "@/lib/pricing";
+import { effectiveFxRateAsync } from "@/lib/fx";
 import { deliveryEstimateAr } from "@/lib/ksa";
 import { getLocale } from "@/lib/i18n";
 import type { ShippingOptionDto } from "@/lib/query/keys";
@@ -36,15 +37,20 @@ export async function GET(request: Request): Promise<NextResponse> {
   const locale = await getLocale();
 
   try {
-    const options = await getShippingOptions({
-      aeProductId: parsed.data.productId,
-      quantity: parsed.data.quantity,
-    });
+    // سعر الصرف من قاعدة البيانات لا قيمة البيئة — نفس ما تُحصّله السلة،
+    // وإلا اختلفت أجرة الشحن المعروضة هنا عمّا يُدفع فعلًا.
+    const [options, fxRate] = await Promise.all([
+      getShippingOptions({
+        aeProductId: parsed.data.productId,
+        quantity: parsed.data.quantity,
+      }),
+      effectiveFxRateAsync(),
+    ]);
 
     const dto: ShippingOptionDto[] = options.map((o) => ({
       code: o.code,
       company: o.company,
-      feeSar: toSar(o.feeSource),
+      feeSar: toSar(o.feeSource, fxRate),
       isFree: o.isFree,
       hasTracking: o.hasTracking,
       estimate: deliveryEstimateAr(o.minDays, o.maxDays, locale),

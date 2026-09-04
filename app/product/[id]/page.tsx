@@ -4,6 +4,8 @@ import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { AddToCartForm } from "@/components/add-to-cart-form";
 import { Alert, Card } from "@/components/ui";
 import { fetchAndMirrorProduct } from "@/lib/catalog";
+import { prisma } from "@/lib/db";
+import { effectiveFxRateAsync } from "@/lib/fx";
 import { getShippingOptions, AeApiError } from "@/lib/aliexpress";
 import { retailUnitPriceSar, formatSar, toSar } from "@/lib/pricing";
 import { deliveryEstimateAr } from "@/lib/ksa";
@@ -36,6 +38,24 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
   if (product.skus.length === 0) notFound();
 
   /**
+   * التسعير يطابق ما تحتسبه السلة تمامًا: سعر الصرف من قاعدة البيانات
+   * (لا قيمة البيئة) وهامش المنتج الخاص إن وُجد. بدونهما كانت هذه الصفحة
+   * تعرض سعرًا وتُحصّل السلة سعرًا آخر — العميل يرى رقمًا ويُخصم منه غيره.
+   */
+  const [fxRate, mirror] = await Promise.all([
+    effectiveFxRateAsync(),
+    prisma.product.findUnique({
+      where: { aeProductId: id },
+      select: { marginPercent: true },
+    }),
+  ]);
+  const priceOpts = {
+    fxRate,
+    marginPercent:
+      mirror?.marginPercent == null ? undefined : Number(mirror.marginPercent),
+  };
+
+  /**
    * جلب مسبق لخيارات الشحن بكمية واحدة.
    * يملأ ذاكرة TanStack قبل إرسال HTML، فتظهر الخيارات فورًا بلا وميض
    * تحميل، ثم يتولّى العميل إعادة الجلب عند تغيّر الكمية.
@@ -48,7 +68,7 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
     const dto: ShippingOptionDto[] = options.map((o) => ({
       code: o.code,
       company: o.company,
-      feeSar: toSar(o.feeSource),
+      feeSar: toSar(o.feeSource, fxRate),
       isFree: o.isFree,
       hasTracking: o.hasTracking,
       estimate: deliveryEstimateAr(o.minDays, o.maxDays, locale),
@@ -121,7 +141,7 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
             </div>
 
             <p className="nums mt-5 text-3xl font-bold text-brand-700 dark:text-brand-400">
-              {formatSar(retailUnitPriceSar(cheapest), locale)}
+              {formatSar(retailUnitPriceSar(cheapest, priceOpts), locale)}
             </p>
             <p className="mt-1 text-xs text-ink-500">{t.product.priceNote}</p>
 
@@ -169,7 +189,7 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
                       skuAttr: s.skuAttr,
                       label: s.variantLabel,
                       stock: s.stock,
-                      priceSar: retailUnitPriceSar(s.sourcePrice),
+                      priceSar: retailUnitPriceSar(s.sourcePrice, priceOpts),
                     }))}
                   />
                 </HydrationBoundary>
