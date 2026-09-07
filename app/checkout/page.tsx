@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { redirect } from "next/navigation";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { CheckoutForm } from "@/components/checkout-form";
@@ -26,6 +27,7 @@ export async function generateMetadata() {
 }
 
 export default async function CheckoutPage() {
+  const checkoutToken = randomBytes(32).toString("base64url");
   const [cart, t, locale] = await Promise.all([
     readCart(),
     getDictionary(),
@@ -57,6 +59,7 @@ export default async function CheckoutPage() {
             <CheckoutForm
               isLoggedIn={Boolean(user)}
               labels={t.checkout}
+              checkoutToken={checkoutToken}
               defaults={
                 savedAddress
                   ? {
@@ -87,7 +90,12 @@ export default async function CheckoutPage() {
                     <span className="size-12 shrink-0 overflow-hidden rounded bg-ink-100 dark:bg-ink-800">
                       {l.imageUrl && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={l.imageUrl} alt="" className="size-full object-cover" />
+                        <img
+                          src={l.imageUrl}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                          className="size-full object-cover"
+                        />
                       )}
                     </span>
                     <span className="min-w-0 flex-1">

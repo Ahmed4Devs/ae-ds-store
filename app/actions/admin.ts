@@ -15,7 +15,9 @@ import { fill, getDictionary } from "@/lib/i18n";
  * Next.js 16 صراحةً.
  */
 
-const orderIdSchema = z.object({ orderId: z.string().min(1) });
+const orderIdSchema = z
+  .object({ orderId: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/) })
+  .strict();
 
 export type AdminActionResult =
   | { ok: true; message: string }

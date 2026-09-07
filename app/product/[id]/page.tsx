@@ -1,22 +1,33 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { AddToCartForm } from "@/components/add-to-cart-form";
 import { Alert, Card } from "@/components/ui";
-import { fetchAndMirrorProduct } from "@/lib/catalog";
 import { prisma } from "@/lib/db";
 import { effectiveFxRateAsync } from "@/lib/fx";
-import { getShippingOptions, AeApiError } from "@/lib/aliexpress";
+import { getProduct, getShippingOptions, AeApiError } from "@/lib/aliexpress";
 import { retailUnitPriceSar, formatSar, toSar } from "@/lib/pricing";
 import { deliveryEstimateAr } from "@/lib/ksa";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
 import { getQueryClient } from "@/lib/query/client";
 import { queryKeys, type ShippingOptionDto } from "@/lib/query/keys";
 
+// معرّف AliExpress رقمي؛ الحد يمنع تمرير مسارات/حمولات ضخمة للمزوّد وDB.
+const AE_PRODUCT_ID = /^\d{5,32}$/;
+
+function validProductId(value: string): boolean {
+  return AE_PRODUCT_ID.test(value);
+}
+
+/** مشاركة جلب التفاصيل بين metadata والصفحة ضمن الطلب نفسه بلا كتابة DB. */
+const fetchProductForView = cache(getProduct);
+
 export async function generateMetadata(props: PageProps<"/product/[id]">) {
   const { id } = await props.params;
+  if (!validProductId(id)) return { title: "—", robots: { index: false } };
   try {
-    const p = await fetchAndMirrorProduct(id);
+    const p = await fetchProductForView(id);
     return { title: p.title.slice(0, 70) };
   } catch {
     return { title: "—" };
@@ -25,11 +36,14 @@ export async function generateMetadata(props: PageProps<"/product/[id]">) {
 
 export default async function ProductPage(props: PageProps<"/product/[id]">) {
   const { id } = await props.params;
+  if (!validProductId(id)) notFound();
   const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
 
   let product;
   try {
-    product = await fetchAndMirrorProduct(id);
+    // زيارة عامة لا تنشئ صف Product دائمًا. المرآة تُكتب فقط من إجراء
+    // الإدارة؛ وإلا يستطيع ماسح أرقام ملء PostgreSQL بمنتجات لم نعتمدها.
+    product = await fetchProductForView(id);
   } catch (e) {
     if (e instanceof AeApiError) notFound();
     throw e;
@@ -99,6 +113,7 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
               <img
                 src={product.imageUrls[0]}
                 alt={product.title}
+                referrerPolicy="no-referrer"
                 className="aspect-square w-full object-cover"
               />
             </div>
@@ -110,6 +125,7 @@ export default async function ProductPage(props: PageProps<"/product/[id]">) {
                     key={i}
                     src={url}
                     alt=""
+                    referrerPolicy="no-referrer"
                     className="aspect-square rounded-lg border border-(--color-border-app) object-cover"
                   />
                 ))}

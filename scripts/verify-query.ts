@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * تحقّق من طبقة TanStack Query عبر مسارات API الحقيقية.
@@ -7,10 +8,23 @@ import "dotenv/config";
  * يُشغَّل بـ: npm run verify:query
  */
 
-const BASE = process.env.VERIFY_BASE_URL ?? "http://localhost:3000";
+const configuredBase = new URL(
+  process.env.VERIFY_BASE_URL ?? "http://localhost:3000",
+);
+if (
+  !["http:", "https:"].includes(configuredBase.protocol) ||
+  configuredBase.username ||
+  configuredBase.password ||
+  configuredBase.search ||
+  configuredBase.hash
+) {
+  throw new Error("VERIFY_BASE_URL يجب أن يكون أصل http(s) بلا بيانات اعتماد أو query");
+}
+const BASE = configuredBase.origin;
 
 let passed = 0;
 let failed = 0;
+let skipped = 0;
 
 function check(label: string, cond: boolean, detail?: string) {
   if (cond) {
@@ -24,6 +38,27 @@ function check(label: string, cond: boolean, detail?: string) {
 
 function section(t: string) {
   console.log(`\n── ${t} ${"─".repeat(Math.max(0, 54 - t.length))}`);
+}
+
+function skip(label: string, detail: string): void {
+  skipped++;
+  console.log(`  ↷ ${label} — ${detail}`);
+}
+
+function mergeResponseCookies(jar: Map<string, string>, response: Response): void {
+  for (const header of response.headers.getSetCookie()) {
+    const pair = header.split(";", 1)[0];
+    const separator = pair.indexOf("=");
+    if (separator <= 0) continue;
+    const name = pair.slice(0, separator);
+    const value = pair.slice(separator + 1);
+    if (value === "") jar.delete(name);
+    else jar.set(name, value);
+  }
+}
+
+function cookieHeader(jar: Map<string, string>): string {
+  return [...jar].map(([name, value]) => `${name}=${value}`).join("; ");
 }
 
 interface ShippingDto {
@@ -92,36 +127,105 @@ async function main() {
   // -------------------------------------------------------------------
   section("دخول المسؤول والوصول المصرّح");
 
-  const login = await fetch(`${BASE}/api/auth/sign-in/email`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Origin: BASE },
-    body: JSON.stringify({
-      email: "admin@ae-ds-store.local",
-      password: "Admin12345",
-    }),
-  });
-  check("تسجيل الدخول ينجح", login.ok, `HTTP ${login.status}`);
+  const adminEmail = process.env.VERIFY_ADMIN_EMAIL?.trim();
+  const adminPassword = process.env.VERIFY_ADMIN_PASSWORD;
+  if (!adminEmail || !adminPassword) {
+    skip(
+      "اختبار دخول المسؤول",
+      "اختياري؛ اضبط VERIFY_ADMIN_EMAIL وVERIFY_ADMIN_PASSWORD وVERIFY_ADMIN_TOTP_CODE مؤقتًا",
+    );
+  } else {
+    const cookies = new Map<string, string>();
+    try {
+      const login = await fetch(`${BASE}/api/auth/sign-in/email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: BASE },
+        body: JSON.stringify({ email: adminEmail, password: adminPassword }),
+      });
+      mergeResponseCookies(cookies, login);
+      const loginBody = (await login.clone().json().catch(() => null)) as {
+        twoFactorRedirect?: unknown;
+      } | null;
+      let authenticated = login.ok;
 
-  const cookie = login.headers.getSetCookie().join("; ");
-  const adminOk = await fetch(`${BASE}/api/admin/orders`, {
-    headers: { Cookie: cookie },
-  });
-  check("المسؤول يصل إلى بياناته", adminOk.ok, `HTTP ${adminOk.status}`);
+      if (login.ok && loginBody?.twoFactorRedirect === true) {
+        const totpCode = process.env.VERIFY_ADMIN_TOTP_CODE ?? "";
+        if (!/^\d{6}$/u.test(totpCode)) {
+          check(
+            "رمز TOTP مؤقت مضبوط لاختبار المسؤول",
+            false,
+            "اضبط VERIFY_ADMIN_TOTP_CODE بستة أرقام وقت التشغيل فقط",
+          );
+          authenticated = false;
+        } else {
+          const secondFactor = await fetch(
+            `${BASE}/api/auth/two-factor/verify-totp`,
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Origin: BASE,
+                Cookie: cookieHeader(cookies),
+              },
+              body: JSON.stringify({ code: totpCode, trustDevice: false }),
+            },
+          );
+          mergeResponseCookies(cookies, secondFactor);
+          check(
+            "العامل الثاني للمسؤول ينجح",
+            secondFactor.ok,
+            `HTTP ${secondFactor.status}`,
+          );
+          authenticated = secondFactor.ok;
+        }
+      } else {
+        check("تسجيل الدخول ينجح", login.ok, `HTTP ${login.status}`);
+      }
 
-  const payload = (await adminOk.json()) as {
-    rows: unknown[];
-    stats: { totalOrders: number };
-  };
-  check("الاستجابة تحمل الصفوف والإحصاءات", Array.isArray(payload.rows) && typeof payload.stats?.totalOrders === "number");
+      if (authenticated && cookies.size > 0) {
+        const adminOk = await fetch(`${BASE}/api/admin/orders`, {
+          headers: { Cookie: cookieHeader(cookies) },
+        });
+        check(
+          "المسؤول يصل إلى بياناته",
+          adminOk.ok,
+          `HTTP ${adminOk.status}`,
+        );
+
+        if (adminOk.ok) {
+          const payload = (await adminOk.json()) as {
+            rows: unknown[];
+            stats: { totalOrders: number };
+          };
+          check(
+            "الاستجابة تحمل الصفوف والإحصاءات",
+            Array.isArray(payload.rows) &&
+              typeof payload.stats?.totalOrders === "number",
+          );
+        }
+      }
+    } finally {
+      // لا نترك جلسة تحقق صالحة على الحساب الحقيقي.
+      if (cookies.size > 0) {
+        await fetch(`${BASE}/api/auth/sign-out`, {
+          method: "POST",
+          headers: { Cookie: cookieHeader(cookies), Origin: BASE },
+        }).catch(() => undefined);
+      }
+    }
+  }
 
   console.log(`\n${"═".repeat(58)}`);
-  console.log(`  نجح: ${passed}   |   فشل: ${failed}`);
+  console.log(`  نجح: ${passed}   |   فشل: ${failed}   |   تخطّى: ${skipped}`);
   console.log(`${"═".repeat(58)}\n`);
 
   if (failed > 0) process.exit(1);
 }
 
 main().catch((e) => {
-  console.error("\n✗ فشل التحقق — تأكّد أن الخادم يعمل:", e);
+  console.error(
+    "\n✗ فشل التحقق — تأكّد أن الخادم يعمل:",
+    safeErrorKind(e),
+  );
   process.exit(1);
 });

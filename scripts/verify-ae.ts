@@ -10,6 +10,7 @@ import {
   searchProducts,
 } from "@/lib/aliexpress/api";
 import { AeApiError } from "@/lib/aliexpress/errors";
+import { aeOrderCreateResponseSchema } from "@/lib/aliexpress/schemas";
 
 /**
  * تحقّق من طبقة تكامل AliExpress.
@@ -36,6 +37,18 @@ function section(title: string) {
 async function main() {
   console.log("\n=== تحقّق طبقة تكامل AliExpress ===");
   console.log(`الوضع: ${process.env.AE_MODE}`);
+
+  const reflectedCode = "TOP_SECRET_REFLECTED_AS_CODE";
+  const unknownError = new AeApiError({
+    apiName: "synthetic",
+    code: reflectedCode,
+    message: "provider detail",
+  });
+  check(
+    "رمز مورد غير موثّق لا يُحفظ أو يُعرض حرفيًا",
+    unknownError.code === "UNKNOWN_UPSTREAM_ERROR" &&
+      !unknownError.message.includes(reflectedCode),
+  );
 
   // ---------------------------------------------------------------------
   section("خوارزمية التوقيع (المستند 836)");
@@ -148,6 +161,18 @@ async function main() {
   });
   check("أُنشئت الطلبية", placed.aeOrderIds.length > 0, placed.aeOrderIds.join(", "));
   check("order_list يُعامَل كمصفوفة", Array.isArray(placed.aeOrderIds));
+  check(
+    "نجاح بلا معرّف مورد يُرفض بدل وسم الطلبية SOURCED",
+    !aeOrderCreateResponseSchema.safeParse({
+      result: { is_success: "true", order_list: [] },
+    }).success,
+  );
+  check(
+    "معرّفات المورد المكررة تُرفض",
+    !aeOrderCreateResponseSchema.safeParse({
+      result: { is_success: "true", order_list: ["12345", "12345"] },
+    }).success,
+  );
 
   // منع التكرار
   let duplicateCaught = false;

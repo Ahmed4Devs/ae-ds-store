@@ -69,6 +69,9 @@ export const saudiPostalCodeSchema = z
   .trim()
   .regex(/^\d{5}$/, "الرمز البريدي يتكوّن من خمس خانات");
 
+const noControlCharacters = (value: string) =>
+  !/[\u0000-\u001f\u007f]/u.test(value);
+
 /**
  * مخطّط عنوان الشحن.
  * الحقول الإلزامية هنا تقابل ما ينص عليه التوثيق كـ required في
@@ -79,19 +82,32 @@ export const shippingAddressSchema = z.object({
     .string()
     .trim()
     .min(3, "الاسم الكامل مطلوب")
-    .max(80, "الاسم طويل جدًا"),
+    .max(80, "الاسم طويل جدًا")
+    .refine(noControlCharacters, "الاسم يحتوي محارف غير مسموحة"),
   phone: saudiPhoneSchema,
   country: z.literal("SA").default("SA"),
   province: z.enum(SAUDI_REGIONS, {
     message: "يُرجى اختيار المنطقة",
   }),
-  city: z.string().trim().min(2, "المدينة مطلوبة").max(60),
+  city: z
+    .string()
+    .trim()
+    .min(2, "المدينة مطلوبة")
+    .max(60)
+    .refine(noControlCharacters, "اسم المدينة يحتوي محارف غير مسموحة"),
   addressLine1: z
     .string()
     .trim()
     .min(5, "العنوان التفصيلي مطلوب (الشارع والحي ورقم المبنى)")
-    .max(200),
-  addressLine2: z.string().trim().max(200).optional().or(z.literal("")),
+    .max(200)
+    .refine(noControlCharacters, "العنوان يحتوي محارف غير مسموحة"),
+  addressLine2: z
+    .string()
+    .trim()
+    .max(200)
+    .refine(noControlCharacters, "العنوان يحتوي محارف غير مسموحة")
+    .optional()
+    .or(z.literal("")),
   postalCode: saudiPostalCodeSchema.optional().or(z.literal("")),
   /**
    * اختياري لكن يُنصح به بشدة: العنوان الوطني هو المعيار المعتمد

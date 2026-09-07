@@ -11,6 +11,7 @@ import {
   createPaymentIntent,
 } from "@/lib/payments";
 import { getCurrentUser, isAdmin } from "@/lib/session";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * إجراءات الدفع.
@@ -19,8 +20,12 @@ import { getCurrentUser, isAdmin } from "@/lib/session";
  * إجراءات الخادم قابلة للاستدعاء بطلب POST مباشر.
  */
 
-const startSchema = z.object({ orderNumber: z.string().min(1).max(64) });
-const confirmSchema = z.object({ intentId: z.string().min(1).max(64) });
+const startSchema = z
+  .object({ orderNumber: z.string().regex(/^AE-\d{8}-[0-9A-F]{6}$/) })
+  .strict();
+const confirmSchema = z
+  .object({ intentId: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/) })
+  .strict();
 
 export type StartPaymentResult =
   | { ok: true; checkoutUrl: string | null }
@@ -66,12 +71,15 @@ export async function startPaymentAction(
               : t.payment.createFailed;
 
       if (e.code === "PROVIDER_FAILED") {
-        console.error("[payment] فشل المزوّد:", e.message);
+        console.error("[payment] فشل المزوّد:", safeErrorKind(e));
       }
       return { ok: false, message };
     }
 
-    console.error("[payment] خطأ غير متوقّع أثناء بدء الدفع:", e);
+    console.error(
+      "[payment] خطأ غير متوقّع أثناء بدء الدفع:",
+      safeErrorKind(e),
+    );
     return { ok: false, message: t.payment.createFailed };
   }
 }

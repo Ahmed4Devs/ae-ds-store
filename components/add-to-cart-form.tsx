@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button, cx } from "@/components/ui";
-import { formatSar } from "@/lib/pricing";
+import { formatSar } from "@/lib/pricing/format";
 import { fill, type Locale } from "@/lib/i18n/shared";
 import { useAddToCart, useShippingOptions } from "@/lib/query/hooks";
 

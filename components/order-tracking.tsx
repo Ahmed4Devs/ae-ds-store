@@ -8,17 +8,26 @@ import { formatDateAr } from "@/lib/ksa";
 import type { OrderTrackingDto } from "@/lib/query/keys";
 
 /**
- * يقبل رابط شركة الشحن فقط إن كان http/https.
+ * يقبل رابط شركة الشحن الخارجي فقط إن كان HTTPS بلا بيانات اعتماد.
  *
  * رابط cpWebsiteUrl مصدره بيانات تتبّع AliExpress (طرف ثالث)، ويُعرض كـ
  * href. من دون التحقق من المخطّط قد يحمل javascript: أو data:. تهريب
  * React يعطّل التنفيذ، لكن التحقق هنا دفاع صريح لا يعتمد على سلوك الإطار.
  */
 function safeHttpUrl(url: string | null | undefined): string | null {
-  if (!url) return null;
+  if (
+    !url ||
+    url.length > 4_096 ||
+    /[\u0000-\u001f\u007f]/u.test(url)
+  ) return null;
   try {
     const u = new URL(url);
-    return u.protocol === "http:" || u.protocol === "https:" ? url : null;
+    return u.protocol === "https:" &&
+      u.username === "" &&
+      u.password === "" &&
+      (u.port === "" || u.port === "443")
+      ? u.toString()
+      : null;
   } catch {
     return null;
   }
@@ -104,7 +113,9 @@ export function OrderTracking({
         <Card className="mb-6 p-5">
           <p className="mb-4 font-semibold">{labels.tracking}</p>
           <div className="space-y-6">
-            {packages.map((pkg) => (
+            {packages.map((pkg) => {
+              const carrierUrl = safeHttpUrl(pkg.cpWebsiteUrl);
+              return (
               <div key={pkg.mailNo}>
                 <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
                   <span className="text-ink-500">{labels.trackingNumber}</span>
@@ -114,9 +125,9 @@ export function OrderTracking({
                   >
                     {pkg.mailNo}
                   </code>
-                  {safeHttpUrl(pkg.cpWebsiteUrl) && (
+                  {carrierUrl && (
                     <a
-                      href={safeHttpUrl(pkg.cpWebsiteUrl)!}
+                      href={carrierUrl}
                       target="_blank"
                       rel="noreferrer noopener"
                       className="text-xs text-brand-600 hover:underline"
@@ -158,7 +169,8 @@ export function OrderTracking({
                   ))}
                 </ol>
               </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       ) : (

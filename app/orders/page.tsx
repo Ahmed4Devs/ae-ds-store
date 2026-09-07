@@ -97,6 +97,7 @@ export default async function OrdersPage() {
                           <img
                             src={it.imageSnapshot}
                             alt=""
+                            referrerPolicy="no-referrer"
                             className="size-full object-cover"
                           />
                         )}

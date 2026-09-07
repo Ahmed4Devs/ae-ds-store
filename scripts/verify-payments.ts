@@ -1,6 +1,8 @@
 import "dotenv/config";
+import { randomUUID } from "node:crypto";
 import { env } from "@/lib/env";
 import { prisma } from "@/lib/db";
+import { consumeDatabaseRateLimit } from "@/lib/database-rate-limit";
 import { searchProducts, getProduct, getShippingOptions } from "@/lib/aliexpress";
 import { createLocalOrder, markOrderPaid, sourceOrderFromAliExpress } from "@/lib/orders";
 import { cancelOrder, canCancel } from "@/lib/order-cancel";
@@ -10,10 +12,16 @@ import {
   createPaymentIntent,
   expireStaleIntents,
   getLatestIntent,
+  sanitizePaymentFailureCode,
+  sanitizePaymentFailureMessage,
   settleIntent,
 } from "@/lib/payments";
 import { shippingAddressSchema } from "@/lib/ksa";
 import type { Cart } from "@/lib/cart";
+import {
+  fetchPaymentProvider,
+  readProviderJson,
+} from "@/lib/payments/security";
 
 /**
  * تحقّق من طبقة الدفع وإلغاء الطلبيات.
@@ -77,6 +85,44 @@ async function cleanup(orderId: string): Promise<void> {
   await prisma.order.delete({ where: { id: orderId } }).catch(() => undefined);
 }
 
+/** يضيف سجل دفع موثّقًا قبل اختبار انتقال Order إلى PAID مباشرةً. */
+async function attachPaidProof(orderId: string, label: string): Promise<void> {
+  const order = await prisma.order.findUniqueOrThrow({
+    where: { id: orderId },
+    select: { totalSar: true },
+  });
+  await prisma.paymentIntent.create({
+    data: {
+      orderId,
+      provider: "manual",
+      providerRef: `verify-paid-${label}-${orderId}`,
+      status: "PAID",
+      amountSar: order.totalSar,
+      currency: "SAR",
+      paidAt: new Date(),
+    },
+  });
+}
+
+/** يبني إثباتًا ماليًا كاملًا كما تفعل webhook الحقيقية. */
+async function settleManual(
+  providerRef: string,
+  status: "PAID" | "FAILED" | "EXPIRED" | "REFUNDED",
+  amountOverride?: number,
+) {
+  const row = await prisma.paymentIntent.findUniqueOrThrow({
+    where: { providerRef },
+    select: { amountSar: true, currency: true },
+  });
+  return settleIntent(providerRef, {
+    status,
+    provider: "manual",
+    amountSar: amountOverride ?? Number(row.amountSar),
+    currency: row.currency,
+    payload: { source: "security-verification" },
+  });
+}
+
 async function main() {
   console.log("\n=== تحقّق طبقة الدفع والإلغاء ===");
 
@@ -109,6 +155,67 @@ async function main() {
   const provider = activeProvider();
   check("المزوّد معروف", ["manual", "moyasar", "tap"].includes(provider));
   console.log(`     المزوّد: ${provider}`);
+
+  section("تعقيم بيانات فشل المزوّد");
+  const safeCode = sanitizePaymentFailureCode("\r\nbad code<script>");
+  const safeMessage = sanitizePaymentFailureMessage(
+    "<img>\r\nprovider failure\u0000",
+  );
+  check(
+    "رمز الفشل صار معرّفًا محدودًا بلا محارف تحكم",
+    safeCode === "bad_code_script" && /^[A-Za-z0-9_.:-]{1,100}$/.test(safeCode),
+    safeCode ?? "null",
+  );
+  check(
+    "رسالة الفشل صارت نصًا محدودًا بلا HTML أو محارف تحكم",
+    safeMessage === "img provider failure" &&
+      !/[<>\u0000-\u001f\u007f]/u.test(safeMessage),
+    safeMessage ?? "null",
+  );
+  const rejectedProviderRef = await settleIntent("bad\r\nreference", {
+    status: "FAILED",
+    provider: "manual",
+    amountSar: 1,
+    currency: "SAR",
+  });
+  check("رُفض مرجع مزوّد يحوي محارف تحكم", !rejectedProviderRef.applied);
+
+  let ssrfRejected = false;
+  try {
+    await fetchPaymentProvider("https://example.invalid/steal", {
+      headers: { Authorization: "Bearer must-not-leave" },
+    });
+  } catch {
+    ssrfRejected = true;
+  }
+  check("عميل الدفع يرفض مضيفًا خارج قائمة المزوّدين", ssrfRejected);
+
+  let wrongProviderTypeRejected = false;
+  try {
+    await readProviderJson(
+      new Response("{}", { headers: { "content-type": "text/html" } }),
+    );
+  } catch {
+    wrongProviderTypeRejected = true;
+  }
+  check("عميل الدفع يرفض استجابة ليست JSON", wrongProviderTypeRejected);
+
+  section("الخنق الموزّع قبل مصالحة بوابة الدفع");
+  const limiterKey = `verify:payment-rate:${randomUUID()}`;
+  try {
+    const decisions = await Promise.all(
+      Array.from({ length: 8 }, () =>
+        consumeDatabaseRateLimit(limiterKey, 3, 60_000),
+      ),
+    );
+    check(
+      "الحد الذري لا يسمح بأكثر من ثلاث محاولات متزامنة",
+      decisions.filter((decision) => decision.ok).length === 3,
+      String(decisions.filter((decision) => decision.ok).length),
+    );
+  } finally {
+    await prisma.rateLimit.deleteMany({ where: { key: limiterKey } });
+  }
 
   // ================================================================
   section("إتمام الشراء لا يدفع ولا يشتري");
@@ -156,7 +263,7 @@ async function main() {
   );
 
   section("التسوية خاملة (لا شراء مزدوج)");
-  const first = await settleIntent(intent.providerRef, { status: "PAID" });
+  const first = await settleManual(intent.providerRef, "PAID");
   check("طُبِّقت التسوية الأولى", first.applied);
 
   const afterFirst = await prisma.order.findUnique({
@@ -168,7 +275,7 @@ async function main() {
   check("أُنشئت طلبيات لدى المنصة", aeCount > 0);
 
   // ⚠️ جوهر الخمول: الإشعار المكرّر لا يشتري مرة ثانية
-  const second = await settleIntent(intent.providerRef, { status: "PAID" });
+  const second = await settleManual(intent.providerRef, "PAID");
   check("رُفضت التسوية المكرّرة", !second.applied);
   const aeCountAfter = await prisma.aeOrder.count({ where: { orderId: a.orderId } });
   check(
@@ -205,7 +312,7 @@ async function main() {
   );
 
   // إشعار متأخّر يصل بعد الإلغاء: يجب ألا يعيد الطلبية إلى PAID ولا يشتري
-  await settleIntent(bIntent.providerRef, { status: "PAID" });
+  await settleManual(bIntent.providerRef, "PAID");
   const bFinal = await prisma.order.findUnique({
     where: { id: b.orderId },
     select: { status: true, aeOrders: { select: { id: true } } },
@@ -222,12 +329,148 @@ async function main() {
   // ================================================================
   section("حدود الإلغاء");
   check("بانتظار الدفع قابلة للإلغاء", canCancel("PENDING_PAYMENT"));
-  check("المدفوعة قابلة للإلغاء", canCancel("PAID"));
+  check(
+    "المدفوعة غير قابلة للإلغاء قبل تنفيذ استرداد",
+    !canCancel("PAID"),
+  );
   check("المورَّدة غير قابلة للإلغاء", !canCancel("SOURCED"));
   check("المشحونة غير قابلة للإلغاء", !canCancel("SHIPPED"));
   check("المسلَّمة غير قابلة للإلغاء", !canCancel("DELIVERED"));
 
+  const paidOnly = await makeOrder();
+  await attachPaidProof(paidOnly.orderId, "cancel-boundary");
+  await markOrderPaid(paidOnly.orderId);
+  const paidOnlyCancel = await cancelOrder(paidOnly.orderId, {
+    actor: "customer",
+    reason: "يجب ألا يلغي الدفع بلا استرداد",
+  });
+  const paidOnlyAfter = await prisma.order.findUnique({
+    where: { id: paidOnly.orderId },
+    select: { status: true, cancelledAt: true },
+  });
+  check(
+    "رُفض إلغاء طلبية PAID فعليًا",
+    !paidOnlyCancel.ok && paidOnlyCancel.reason === "NOT_CANCELLABLE",
+  );
+  check(
+    "لم تُطمس حالة PAID بإلغاء محلي",
+    paidOnlyAfter?.status === "PAID" && paidOnlyAfter.cancelledAt == null,
+    paidOnlyAfter?.status,
+  );
+  await cleanup(paidOnly.orderId);
+
+  section("نيّة بوابة خارجية مفتوحة تمنع الإلغاء");
+  const externalOpen = await makeOrder();
+  const externalOpenIntent = await createPaymentIntent(externalOpen.orderId);
+  // لا نتصل ببوابة حقيقية في سكربت التحقق. تغيير اسم المزوّد فقط يحاكي
+  // حجزًا خارجيًا حيًا، وهو الحقل الذي يبني عليه حارس الإلغاء قراره.
+  await prisma.paymentIntent.update({
+    where: { id: externalOpenIntent.intentId },
+    data: { provider: "tap" },
+  });
+  const externalOpenCancel = await cancelOrder(externalOpen.orderId, {
+    actor: "customer",
+    reason: "محاكاة ضغط الإلغاء أثناء صفحة الدفع",
+  });
+  const externalOpenAfter = await prisma.order.findUnique({
+    where: { id: externalOpen.orderId },
+    select: {
+      status: true,
+      cancelledAt: true,
+      payments: {
+        where: { id: externalOpenIntent.intentId },
+        select: { status: true, provider: true },
+      },
+    },
+  });
+  check(
+    "رُفض الإلغاء مع وجود نيّة خارجية مفتوحة",
+    !externalOpenCancel.ok && externalOpenCancel.reason === "NOT_CANCELLABLE",
+  );
+  check(
+    "بقي الطلب والنية مفتوحين للمطابقة مع البوابة",
+    externalOpenAfter?.status === "PENDING_PAYMENT" &&
+      externalOpenAfter.cancelledAt == null &&
+      externalOpenAfter.payments[0]?.provider === "tap" &&
+      ["REQUIRES_ACTION", "PENDING"].includes(
+        externalOpenAfter.payments[0]?.status ?? "",
+      ),
+    `${externalOpenAfter?.status}/${externalOpenAfter?.payments[0]?.status}`,
+  );
+  await cleanup(externalOpen.orderId);
+
+  section("سباق التسوية والإلغاء");
+  const race = await makeOrder();
+  const raceIntent = await createPaymentIntent(race.orderId);
+  const raceProof = await prisma.paymentIntent.findUniqueOrThrow({
+    where: { id: raceIntent.intentId },
+    select: { amountSar: true, currency: true },
+  });
+  const verifiedPaidOutcome = {
+    status: "PAID" as const,
+    provider: "manual" as const,
+    amountSar: Number(raceProof.amountSar),
+    currency: raceProof.currency,
+    payload: { source: "concurrent-security-verification" },
+  };
+
+  // إشعاران متماثلان + إلغاء في اللحظة نفسها: يفوز مسار واحد فقط تحت
+  // قفل Order→PaymentIntent. الإشعار الصحيح لا يُسقط، والتوريد لا يتكرر.
+  const [raceSettleA, raceSettleB, raceCancel] = await Promise.all([
+    settleIntent(raceIntent.providerRef, verifiedPaidOutcome),
+    settleIntent(raceIntent.providerRef, verifiedPaidOutcome),
+    cancelOrder(race.orderId, {
+      actor: "customer",
+      reason: "اختبار سباق الدفع والإلغاء",
+    }),
+  ]);
+  const raceAfter = await prisma.order.findUniqueOrThrow({
+    where: { id: race.orderId },
+    select: {
+      status: true,
+      needsManualReview: true,
+      aeOrders: { select: { id: true } },
+      payments: {
+        where: { id: raceIntent.intentId },
+        select: { status: true },
+      },
+    },
+  });
+  const appliedSettlements = Number(raceSettleA.applied) + Number(raceSettleB.applied);
+  const cancellationWon = raceCancel.ok;
+  const raceStateIsCoherent = cancellationWon
+    ? raceAfter.status === "CANCELLED" &&
+      raceAfter.needsManualReview &&
+      raceAfter.aeOrders.length === 0
+    : raceCancel.reason === "NOT_CANCELLABLE" &&
+      raceAfter.status === "SOURCED" &&
+      !raceAfter.needsManualReview &&
+      raceAfter.aeOrders.length === 1;
+
+  check(
+    "طُبّقت نسخة واحدة فقط من إشعار الدفع المكرر",
+    appliedSettlements === 1,
+    String(appliedSettlements),
+  );
+  check(
+    "لم يُسقط السباق إثبات الدفع الصحيح",
+    raceAfter.payments[0]?.status === "PAID",
+    raceAfter.payments[0]?.status,
+  );
+  check(
+    "نتيجة السباق متماسكة: توريد واحد أو إلغاء مع مراجعة",
+    raceStateIsCoherent,
+    `${raceAfter.status}/review=${raceAfter.needsManualReview}/ae=${raceAfter.aeOrders.length}`,
+  );
+  check(
+    "لم يحدث توريد مزدوج",
+    raceAfter.aeOrders.length <= 1,
+    String(raceAfter.aeOrders.length),
+  );
+  await cleanup(race.orderId);
+
   const c = await makeOrder();
+  await attachPaidProof(c.orderId, "sourcing-boundary");
   await markOrderPaid(c.orderId);
   await sourceOrderFromAliExpress(c.orderId);
   const cCancel = await cancelOrder(c.orderId, { actor: "customer" });
@@ -255,11 +498,35 @@ async function main() {
   // ================================================================
   section("تحديد الدفع كتابة شرطية");
   const d = await makeOrder();
+  await attachPaidProof(d.orderId, "state-transition");
   const firstPaid = await markOrderPaid(d.orderId);
   check("طُبِّق التحديد الأول", firstPaid);
   const secondPaid = await markOrderPaid(d.orderId);
   check("لم يُطبَّق التحديد الثاني (الحالة لم تعد بانتظار الدفع)", !secondPaid);
   await cleanup(d.orderId);
+
+  section("حالة PAID بلا إثبات لا تسمح بالتوريد");
+  const unproven = await makeOrder();
+  // نحاكي صفًا تاريخيًا سبق إدخال PaymentIntent أو كتابةً يدوية خاطئة.
+  await prisma.order.update({
+    where: { id: unproven.orderId },
+    data: { status: "PAID" },
+  });
+  const unprovenSource = await sourceOrderFromAliExpress(unproven.orderId);
+  const unprovenAfter = await prisma.order.findUniqueOrThrow({
+    where: { id: unproven.orderId },
+    select: { needsManualReview: true, aeOrders: { select: { id: true } } },
+  });
+  check(
+    "رُفض التوريد بلا PaymentIntent مدفوع",
+    !unprovenSource.ok && unprovenSource.errorCode === "PAYMENT_PROOF_MISSING",
+    unprovenSource.ok ? "نجح التوريد" : unprovenSource.errorCode,
+  );
+  check(
+    "عُزل الطلب للمراجعة ولم يُنشأ طلب مورد",
+    unprovenAfter.needsManualReview && unprovenAfter.aeOrders.length === 0,
+  );
+  await cleanup(unproven.orderId);
 
   // ================================================================
   section("انتهاء مهلة النيّات المعلّقة");
@@ -296,10 +563,11 @@ async function main() {
     select: { totalSar: true },
   });
   // إشعار بمبلغ أصغر بكثير من المستحق: يجب أن يُرفض لا أن يُسوّي الطلبية
-  const shortPay = await settleIntent(fIntent.providerRef, {
-    status: "PAID",
-    amountSar: Number(fOrder?.totalSar ?? 0) - 100,
-  });
+  const shortPay = await settleManual(
+    fIntent.providerRef,
+    "PAID",
+    Number(fOrder?.totalSar ?? 0) - 100,
+  );
   check("رُفضت تسوية بمبلغ أقل من المستحق", !shortPay.applied);
   const fAfter = await prisma.order.findUnique({
     where: { id: f.orderId },
@@ -318,12 +586,13 @@ async function main() {
     where: { id: g.orderId },
     select: { totalSar: true },
   });
-  await settleIntent(gIntent.providerRef, {
-    status: "PAID",
-    amountSar: Number(gTotal?.totalSar ?? 0),
-  });
+  await settleManual(
+    gIntent.providerRef,
+    "PAID",
+    Number(gTotal?.totalSar ?? 0),
+  );
   // الاسترداد بعد الدفع: المزلاج العام يرفض ما بعد PAID، لكن REFUNDED استثناء
-  const refund = await settleIntent(gIntent.providerRef, { status: "REFUNDED" });
+  const refund = await settleManual(gIntent.providerRef, "REFUNDED");
   check("طُبِّق الاسترداد رغم أن النيّة كانت PAID", refund.applied);
   check("صارت حالة النيّة REFUNDED",
     (await getLatestIntent(g.orderId))?.status === "REFUNDED");

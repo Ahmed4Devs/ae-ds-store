@@ -62,18 +62,35 @@ export interface SearchResult {
 
 export async function searchProducts(p: SearchParams = {}): Promise<SearchResult> {
   const cfg = env();
-  const page = p.page ?? 1;
-  const pageSize = p.pageSize ?? 20;
+  const page = Number.isSafeInteger(p.page) ? Math.min(100, Math.max(1, p.page!)) : 1;
+  const pageSize = Number.isSafeInteger(p.pageSize)
+    ? Math.min(100, Math.max(1, p.pageSize!))
+    : 20;
+  const keyword = safeDisplayText(p.keyword, 120);
+  const categoryId = /^\d{1,32}$/u.test(p.categoryId ?? "")
+    ? p.categoryId
+    : undefined;
+  const allowedSorts: ReadonlySet<string> = new Set([
+    "min_price,asc",
+    "min_price,desc",
+    "orders,asc",
+    "orders,desc",
+    "comments,asc",
+    "comments,desc",
+  ]);
+  const sortBy = typeof p.sortBy === "string" && allowedSorts.has(p.sortBy)
+    ? p.sortBy
+    : undefined;
 
   const { data } = await callAe(
     "aliexpress.ds.text.search",
     {
-      keyWord: p.keyword ?? "",
+      keyWord: keyword,
       local: "en_US",
       countryCode: cfg.STORE_COUNTRY,
       currency: cfg.AE_SOURCE_CURRENCY,
-      categoryId: p.categoryId,
-      sortBy: p.sortBy,
+      categoryId,
+      sortBy,
       pageIndex: page,
       pageSize,
     },
@@ -83,21 +100,61 @@ export async function searchProducts(p: SearchParams = {}): Promise<SearchResult
   const parsed = aeTextSearchResponseSchema.parse(data);
   const products = parsed.data?.products ?? [];
 
+  const items = products.flatMap((it): SearchResultItem[] => {
+    const aeProductId = it.itemId.trim();
+    const title = safeDisplayText(it.title, 500);
+    const imageUrl = safeImageUrl(it.itemMainPic, cfg.AE_MODE === "mock");
+    const currency = (it.salePriceCurrency ?? cfg.AE_SOURCE_CURRENCY)
+      .trim()
+      .toUpperCase();
+    const sourcePrice =
+      positiveMoney(it.targetSalePrice) ?? positiveMoney(it.salePrice);
+
+    // بيانات بطاقة غير قابلة للتحقق لا تتحول إلى سعر صفري أو رابط غير موثوق.
+    if (
+      !/^\d{5,32}$/u.test(aeProductId) ||
+      !title ||
+      !imageUrl ||
+      currency !== cfg.AE_SOURCE_CURRENCY ||
+      sourcePrice == null
+    ) {
+      return [];
+    }
+
+    const rawOriginal =
+      positiveMoney(it.targetOriginalPrice) ?? positiveMoney(it.originalPrice);
+    const rawOrders = Number(it.orders ?? 0);
+    const rawRating = Number(it.score ?? Number.NaN);
+
+    return [{
+      aeProductId,
+      title,
+      imageUrl,
+      sourcePrice,
+      sourceOriginalPrice:
+        rawOriginal != null && rawOriginal >= sourcePrice ? rawOriginal : null,
+      currency,
+      discountLabel: safeDisplayText(it.discount, 128) || null,
+      ordersCount:
+        Number.isSafeInteger(rawOrders) && rawOrders >= 0
+          ? Math.min(rawOrders, 1_000_000_000)
+          : 0,
+      rating:
+        Number.isFinite(rawRating) && rawRating >= 0 && rawRating <= 5
+          ? rawRating
+          : null,
+      categoryId: /^\d{1,32}$/u.test(it.cateId ?? "") ? (it.cateId ?? null) : null,
+      resultType: safeDisplayText(it.type, 32) || null,
+    }];
+  });
+
+  const rawTotal = parsed.data?.totalCount;
   return {
-    items: products.map((it) => ({
-      aeProductId: it.itemId,
-      title: it.title,
-      imageUrl: it.itemMainPic ?? "",
-      sourcePrice: it.targetSalePrice ?? it.salePrice ?? 0,
-      sourceOriginalPrice: it.targetOriginalPrice ?? it.originalPrice ?? null,
-      currency: it.salePriceCurrency ?? cfg.AE_SOURCE_CURRENCY,
-      discountLabel: it.discount ?? null,
-      ordersCount: Number(it.orders ?? 0) || 0,
-      rating: it.score ? Number(it.score) : null,
-      categoryId: it.cateId ?? null,
-      resultType: it.type ?? null,
-    })),
-    total: parsed.data?.totalCount ?? products.length,
+    items,
+    total:
+      rawTotal != null && Number.isSafeInteger(rawTotal) && rawTotal >= 0
+        ? Math.min(rawTotal, 100_000_000)
+        : items.length,
     page,
     pageSize,
   };
@@ -122,7 +179,8 @@ export interface ProductSkuDetail {
 export interface ProductDetail {
   aeProductId: string;
   title: string;
-  descriptionHtml: string | null;
+  /** نص موثوق للعرض عبر React؛ لا نحتفظ بـ HTML المورّد القابل للحقن. */
+  descriptionText: string | null;
   categoryId: string | null;
   currency: string;
   imageUrls: string[];
@@ -132,8 +190,106 @@ export interface ProductDetail {
   skus: ProductSkuDetail[];
 }
 
+function positiveMoney(value: number | null | undefined): number | null {
+  return value != null && Number.isFinite(value) && value > 0 && value <= 1_000_000_000
+    ? value
+    : null;
+}
+
+function safeDisplayText(
+  value: unknown,
+  maxLength: number,
+): string {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function safeDescriptionText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  // القيمة من مزوّد خارجي. حتى إن كان العرض الحالي لا يستخدم innerHTML،
+  // تخزين HTML خام يجعل إضافة مستقبلية واحدة باب XSS مخزّن. نحوله إلى نص
+  // محدود؛ 32k code units تبقى دون قيد PostgreSQL ذي 128KiB حتى مع UTF-8.
+  const text = value
+    .replace(/<[^>]*>/gu, " ")
+    // وسوم مبتورة مثل `<script` لا يلتقطها التعبير السابق؛ نزيل علامتي
+    // الوسم كذلك كي يبقى الحقل نصًا خالصًا تدعمه قيود قاعدة البيانات.
+    .replace(/[<>]/gu, " ")
+    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 32_000);
+  return text || null;
+}
+
+function safeHttpsUrl(value: unknown): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed || trimmed.length > 4_096) return null;
+
+  try {
+    const parsed = new URL(trimmed.startsWith("//") ? `https:${trimmed}` : trimmed);
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function safeImageUrl(
+  value: unknown,
+  allowMockDataUrl: boolean,
+): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (
+    allowMockDataUrl &&
+    (trimmed.startsWith("data:image/svg+xml,") ||
+      trimmed.startsWith("data:image/svg+xml;utf8,")) &&
+    trimmed.length <= 4_096
+  ) {
+    return trimmed;
+  }
+  return safeHttpsUrl(trimmed);
+}
+
+function safeProviderDate(value: number | null | undefined): Date | null {
+  if (value == null || !Number.isFinite(value) || value <= 0) return null;
+  const milliseconds = value < 1_000_000_000_000 ? value * 1_000 : value;
+  const earliest = Date.UTC(2000, 0, 1);
+  const latest = Date.now() + 10 * 365 * 24 * 60 * 60 * 1_000;
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < earliest || milliseconds > latest) {
+    return null;
+  }
+  const date = new Date(milliseconds);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function validStock(value: number | null | undefined): number | null {
+  if (value == null) return 0;
+  return Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000
+    ? value
+    : null;
+}
+
+function upstreamFinancialError(apiName: string, message: string): AeApiError {
+  return new AeApiError({
+    apiName,
+    code: "INVALID_UPSTREAM_FINANCIAL_DATA",
+    message,
+  });
+}
+
 export async function getProduct(aeProductId: string): Promise<ProductDetail> {
   const cfg = env();
+
+  if (!/^\d{5,32}$/u.test(aeProductId)) {
+    throw new AeApiError({
+      apiName: "aliexpress.ds.product.get",
+      code: "ITEM_ID_NOT_FOUND",
+    });
+  }
 
   const { data } = await callAe("aliexpress.ds.product.get", {
     product_id: aeProductId,
@@ -154,52 +310,108 @@ export async function getProduct(aeProductId: string): Promise<ProductDetail> {
   }
 
   const base = result.ae_item_base_info_dto;
+  const returnedProductId = String(base.product_id ?? aeProductId);
+  if (returnedProductId !== aeProductId) {
+    throw upstreamFinancialError(
+      "aliexpress.ds.product.get",
+      "معرّف المنتج في الاستجابة لا يطابق المنتج المطلوب",
+    );
+  }
+  const currency = (base.currency_code ?? cfg.AE_SOURCE_CURRENCY)
+    .trim()
+    .toUpperCase();
+  if (currency !== cfg.AE_SOURCE_CURRENCY) {
+    throw upstreamFinancialError(
+      "aliexpress.ds.product.get",
+      `عملة المنتج غير متوقعة: ${currency}`,
+    );
+  }
   const images = (result.ae_multimedia_info_dto?.image_urls ?? "")
     .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean);
+    .map((s) => safeImageUrl(s, cfg.AE_MODE === "mock"))
+    .filter((url): url is string => url != null)
+    .slice(0, 20);
+  if (images.length === 0) {
+    throw upstreamFinancialError(
+      "aliexpress.ds.product.get",
+      "لم تُرجع المنصة صورة منتج آمنة قابلة للعرض",
+    );
+  }
 
   const rawSkus = result.ae_item_sku_info_dtos?.ae_item_sku_info_d_t_o ?? [];
 
-  const skus: ProductSkuDetail[] = rawSkus
-    // بلا sku_attr لا يمكن تقديم طلبية — نستبعدها بدل أن تفشل لاحقًا
-    .filter((s) => Boolean(s.sku_attr))
-    .map((s) => {
+  const skus: ProductSkuDetail[] = rawSkus.flatMap((s) => {
+      // بلا sku_attr أو سعر موجب أو مخزون صحيح لا يمكن بيع الوحدة بأمان.
+      const skuAttr = s.sku_attr?.trim() ?? "";
+      const skuCurrency = (s.currency_code ?? currency).trim().toUpperCase();
+      const sourcePrice =
+        positiveMoney(s.offer_sale_price) ?? positiveMoney(s.sku_price);
+      const stock = validStock(s.sku_available_stock);
+      if (
+        !skuAttr ||
+        skuAttr.length > 96 ||
+        /[\u0000-\u001f\u007f]/u.test(skuAttr) ||
+        skuCurrency !== cfg.AE_SOURCE_CURRENCY ||
+        sourcePrice == null ||
+        stock == null
+      ) {
+        return [];
+      }
+
       const props = s.ae_sku_property_dtos?.ae_sku_property_d_t_o ?? [];
-      const label =
+      const label = safeDisplayText(
         props
           .map(
             (p) =>
               p.property_value_definition_name ?? p.sku_property_value ?? "",
           )
           .filter(Boolean)
-          .join(" · ") || "افتراضي";
+          .join(" · ") || "افتراضي",
+        1_000,
+      );
 
-      return {
-        aeSkuId: String(s.sku_id ?? ""),
-        skuAttr: s.sku_attr as string,
+      const bulkPrice = positiveMoney(s.offer_bulk_sale_price);
+      const bulkMinQty =
+        s.sku_bulk_order != null &&
+        Number.isSafeInteger(s.sku_bulk_order) &&
+        s.sku_bulk_order > 0
+          ? s.sku_bulk_order
+          : null;
+
+      return [{
+        aeSkuId: safeDisplayText(s.sku_id, 128),
+        skuAttr,
         variantLabel: label,
-        imageUrl: s.sku_image ?? null,
-        sourcePrice: s.offer_sale_price ?? s.sku_price ?? 0,
-        bulkPrice: s.offer_bulk_sale_price ?? null,
-        bulkMinQty: s.sku_bulk_order ?? null,
-        stock: s.sku_available_stock ?? 0,
-      };
+        imageUrl: safeImageUrl(s.sku_image, cfg.AE_MODE === "mock"),
+        sourcePrice,
+        bulkPrice,
+        bulkMinQty,
+        stock,
+      }];
     });
 
+  if (skus.length === 0) {
+    throw upstreamFinancialError(
+      "aliexpress.ds.product.get",
+      "لم تُرجع المنصة أي SKU بسعر ومخزون وعملة صالحة",
+    );
+  }
+
   return {
-    aeProductId: String(base.product_id ?? aeProductId),
-    title: base.subject ?? "",
-    descriptionHtml: base.detail ?? null,
+    aeProductId: returnedProductId,
+    title: safeDisplayText(base.subject, 1_000),
+    descriptionText: safeDescriptionText(base.detail),
     categoryId: base.category_id ? String(base.category_id) : null,
-    currency: base.currency_code ?? cfg.AE_SOURCE_CURRENCY,
+    currency,
     imageUrls: images,
     rating: base.avg_evaluation_rating ? Number(base.avg_evaluation_rating) : null,
     ordersCount: Number(base.sales_count ?? 0) || 0,
-    properties: (result.ae_item_properties?.ae_item_property ?? []).map((p) => ({
-      name: p.attr_name ?? "",
-      value: p.attr_value ?? "",
-    })),
+    properties: (result.ae_item_properties?.ae_item_property ?? [])
+      .map((p) => ({
+        name: safeDisplayText(p.attr_name, 1_000),
+        value: safeDisplayText(p.attr_value, 4_096),
+      }))
+      .filter((property) => property.name || property.value),
     skus,
   };
 }
@@ -225,18 +437,44 @@ export interface ShippingOption {
   includesVat: boolean;
 }
 
-function normalizeOption(o: AeDeliveryOption, fallbackCurrency: string): ShippingOption {
+function normalizeOption(
+  o: AeDeliveryOption,
+  expectedCurrency: string,
+): ShippingOption | null {
+  const code = o.code.trim();
+  const currency = (o.shipping_fee_currency ?? expectedCurrency)
+    .trim()
+    .toUpperCase();
+  const fee = o.shipping_fee_cent ?? 0;
+  const availableStock = o.available_stock ?? null;
+  const minDays = o.min_delivery_days ?? null;
+  const maxDays = o.max_delivery_days ?? null;
+  if (
+    !/^[A-Za-z0-9_.:-]{1,64}$/u.test(code) ||
+    currency !== expectedCurrency ||
+    !Number.isFinite(fee) ||
+    fee < 0 ||
+    fee > 1_000_000_000 ||
+    (availableStock != null &&
+      (!Number.isSafeInteger(availableStock) || availableStock < 0)) ||
+    (minDays != null && (!Number.isSafeInteger(minDays) || minDays < 0)) ||
+    (maxDays != null && (!Number.isSafeInteger(maxDays) || maxDays < 0)) ||
+    (minDays != null && maxDays != null && minDays > maxDays)
+  ) {
+    return null;
+  }
+
   return {
-    code: o.code,
-    company: o.company ?? o.code,
-    feeSource: o.shipping_fee_cent ?? 0,
-    currency: o.shipping_fee_currency ?? fallbackCurrency,
+    code,
+    company: o.company ?? code,
+    feeSource: fee,
+    currency,
     isFree: o.free_shipping ?? false,
-    minDays: o.min_delivery_days ?? null,
-    maxDays: o.max_delivery_days ?? null,
+    minDays,
+    maxDays,
     hasTracking: o.tracking ?? false,
     shipFromCountry: o.ship_from_country ?? null,
-    availableStock: o.available_stock ?? null,
+    availableStock,
     includesVat: o.ddpIncludeVATTax ?? false,
   };
 }
@@ -253,6 +491,23 @@ export async function getShippingOptions(
   p: FreightParams,
 ): Promise<ShippingOption[]> {
   const cfg = env();
+
+  if (
+    !/^\d{5,32}$/u.test(p.aeProductId) ||
+    !Number.isSafeInteger(p.quantity) ||
+    p.quantity < 1 ||
+    p.quantity > 50 ||
+    [p.provinceCode, p.cityCode].some(
+      (value) =>
+        value != null &&
+        (value.length > 64 || /[\u0000-\u001f\u007f]/u.test(value)),
+    )
+  ) {
+    throw new AeApiError({
+      apiName: "aliexpress.ds.freight.query",
+      code: "INVALID_LOCAL_INPUT",
+    });
+  }
 
   const { data } = await callAe("aliexpress.ds.freight.query", {
     queryDeliveryReq: JSON.stringify({
@@ -271,6 +526,7 @@ export async function getShippingOptions(
 
   return options
     .map((o) => normalizeOption(aeDeliveryOptionSchema.parse(o), cfg.AE_SOURCE_CURRENCY))
+    .filter((option): option is ShippingOption => option !== null)
     .sort((a, b) => a.feeSource - b.feeSource);
 }
 
@@ -365,14 +621,36 @@ export async function placeOrder(input: {
     { orderId: input.orderId, timeoutMs: 45_000 },
   );
 
-  const parsed = aeOrderCreateResponseSchema.parse(data);
-  const result = parsed.result;
+  const parsed = aeOrderCreateResponseSchema.safeParse(data);
+  if (!parsed.success) {
+    // ردّ يدّعي النجاح بلا معرّفات حالة غامضة: قد يكون الشراء وقع فعلًا.
+    // لا نرمي ZodError عامةً كي يستطيع محرّك الطلبيات إيقاف الإعادة ورفع
+    // الطلب للمطابقة اليدوية بدل إعادة شراء محتملة.
+    throw new AeApiError({
+      apiName: "aliexpress.ds.order.create",
+      code: "INVALID_ORDER_CREATE_RESPONSE",
+      message: "استجابة إنشاء الطلبية غير قابلة للمطابقة",
+    });
+  }
+  const result = parsed.data.result;
 
   if (!result?.is_success) {
     throw new AeApiError({
       apiName: "aliexpress.ds.order.create",
       code: result?.error_code || "ERROR_WHEN_BUILD_FOR_PLACE_ORDER",
       message: result?.error_msg ?? undefined,
+    });
+  }
+
+  // دفاع أخير إن تغيّر المخطط لاحقًا: لا يُعلَن النجاح بلا أثر مورد فريد.
+  if (
+    result.order_list.length === 0 ||
+    new Set(result.order_list).size !== result.order_list.length
+  ) {
+    throw new AeApiError({
+      apiName: "aliexpress.ds.order.create",
+      code: "INVALID_ORDER_CREATE_RESPONSE",
+      message: "استجابة نجاح بلا معرّفات طلبيات فريدة",
     });
   }
 
@@ -384,6 +662,7 @@ export async function placeOrder(input: {
 // ===========================================================================
 
 export async function orderAfterPay(aeOrderId: string): Promise<boolean> {
+  assertAeOrderId("aliexpress.ds.order.afterpay", aeOrderId);
   const { data } = await callAe("aliexpress.ds.order.afterpay", {
     req: JSON.stringify({ order_id: aeOrderId }),
   });
@@ -404,6 +683,7 @@ export interface AeOrderDetail {
 }
 
 export async function getOrderDetail(aeOrderId: string): Promise<AeOrderDetail> {
+  assertAeOrderId("aliexpress.trade.ds.order.get", aeOrderId);
   const { data } = await callAe("aliexpress.trade.ds.order.get", {
     single_order_query: JSON.stringify({ order_id: aeOrderId }),
   });
@@ -442,6 +722,7 @@ export async function getTracking(
   aeOrderId: string,
 ): Promise<TrackingPackageInfo[]> {
   try {
+    assertAeOrderId("aliexpress.ds.order.tracking.get", aeOrderId);
     const { data } = await callAe("aliexpress.ds.order.tracking.get", {
       ae_order_id: aeOrderId,
       language: "en_US",
@@ -453,25 +734,40 @@ export async function getTracking(
     return lines
       .filter((l) => Boolean(l.mail_no))
       .map((l) => ({
-        mailNo: l.mail_no as string,
-        carrierName: l.carrier_name ?? null,
-        cpName: l.cp_name ?? null,
-        cpWebsiteUrl: l.cp_website_url ?? null,
-        etaAt: l.eta_time_stamps ? new Date(l.eta_time_stamps) : null,
+        mailNo: safeDisplayText(l.mail_no, 128),
+        carrierName: safeDisplayText(l.carrier_name, 256) || null,
+        cpName: safeDisplayText(l.cp_name, 256) || null,
+        cpWebsiteUrl: safeHttpsUrl(l.cp_website_url),
+        etaAt: safeProviderDate(l.eta_time_stamps),
         nodes: (l.detail_node_list ?? [])
-          .map((n) => ({
-            title: n.tracking_name ?? "",
-            description: n.tracking_detail_desc ?? "",
-            at: new Date(n.time_stamp ?? Date.now()),
-          }))
+          .flatMap((n): TrackingNode[] => {
+            const at = safeProviderDate(n.time_stamp);
+            if (!at) return [];
+            return [{
+              title: safeDisplayText(n.tracking_name, 512),
+              description: safeDisplayText(n.tracking_detail_desc, 4_096),
+              at,
+            }];
+          })
           .sort((a, b) => b.at.getTime() - a.at.getTime()),
-      }));
+      }))
+      .filter((line) => Boolean(line.mailNo))
+      .filter(
+        (line, index, all) =>
+          all.findIndex((candidate) => candidate.mailNo === line.mailNo) === index,
+      );
   } catch (e) {
     // غياب بيانات التتبع قبل الشحن حالة طبيعية موثّقة، لا خطأ يُعرض للعميل
     if (e instanceof AeApiError && e.code === "TRACKING DATA NOT FOUND") {
       return [];
     }
     throw e;
+  }
+}
+
+function assertAeOrderId(apiName: string, value: string): void {
+  if (!/^[A-Za-z0-9_-]{1,128}$/u.test(value)) {
+    throw new AeApiError({ apiName, code: "INVALID_LOCAL_INPUT" });
   }
 }
 

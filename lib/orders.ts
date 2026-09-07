@@ -1,11 +1,12 @@
-import { randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
 import { AeApiError, orderAfterPay, placeOrder } from "@/lib/aliexpress";
 import { buildCartSummary } from "@/lib/cart-service";
 import type { Cart } from "@/lib/cart";
-import type { ShippingAddress } from "@/lib/ksa";
+import { shippingAddressSchema, type ShippingAddress } from "@/lib/ksa";
 import { dictionaries, DEFAULT_LOCALE, type Locale } from "@/lib/i18n/shared";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * محرّك الطلبيات.
@@ -30,12 +31,50 @@ export interface CreateOrderInput {
   locale?: Locale;
   userId?: string;
   addressId?: string;
+  saveAddress?: boolean;
   notes?: string;
+  checkoutKeyHash?: string;
+  guestAccessToken?: string;
 }
 
 export interface CreateOrderResult {
   orderId: string;
   orderNumber: string;
+}
+
+/**
+ * يشتق بصمات checkout وقدرة الضيف من nonce عشوائي لا يُخزَّن خامًا.
+ * إدخال هوية المستخدم في البصمة يمنع نقل nonce بين حسابين.
+ */
+export function deriveCheckoutSecurity(
+  checkoutToken: string,
+  userId?: string,
+): { checkoutKeyHash: string; guestAccessToken?: string } {
+  const secret = env().BETTER_AUTH_SECRET;
+  const principal = userId ? `user:${userId}` : "guest";
+  const checkoutKeyHash = createHmac("sha256", secret)
+    .update(`checkout/v1/${principal}/${checkoutToken}`)
+    .digest("base64url");
+
+  if (userId) return { checkoutKeyHash };
+
+  const guestAccessToken = createHmac("sha256", secret)
+    .update(`guest-order-access/v1/${checkoutToken}`)
+    .digest("base64url");
+  return { checkoutKeyHash, guestAccessToken };
+}
+
+function hashGuestAccess(token: string): string {
+  return createHash("sha256").update(token).digest("base64url");
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
 }
 
 /**
@@ -46,6 +85,16 @@ export interface CreateOrderResult {
 export async function createLocalOrder(
   input: CreateOrderInput,
 ): Promise<CreateOrderResult> {
+  if (input.checkoutKeyHash) {
+    const existing = await prisma.order.findUnique({
+      where: { checkoutKeyHash: input.checkoutKeyHash },
+      select: { id: true, orderNumber: true, userId: true },
+    });
+    if (existing && existing.userId === (input.userId ?? null)) {
+      return { orderId: existing.id, orderNumber: existing.orderNumber };
+    }
+  }
+
   const locale = input.locale ?? DEFAULT_LOCALE;
   const summary = await buildCartSummary(input.cart, locale);
   // القاموس يُختار من اللغة المُمرَّرة لا من الكوكيز: محرّك الطلبيات
@@ -63,12 +112,66 @@ export async function createLocalOrder(
   // مفتاح منع التكرار — يُولَّد مرة واحدة ولا يتغيّر مهما تكرّرت المحاولات
   const outOrderId = `${orderNumber}-${randomBytes(4).toString("hex")}`;
 
-  const order = await prisma.order.create({
-    data: {
+  try {
+    const order = await prisma.$transaction(async (tx) => {
+      if (input.checkoutKeyHash) {
+        // قفل PostgreSQL مرتبط بالبصمة يسرسل الطلبات المتزامنة عبر كل نسخ
+        // الخادم. الاستعلام tagged ومعلَّمته منفصلة، فلا تركيب SQL من مدخل.
+        await tx.$queryRaw<Array<{ locked: string }>>`
+          SELECT pg_advisory_xact_lock(
+            hashtextextended(${input.checkoutKeyHash}, 0)
+          )::text AS "locked"
+        `;
+        const wonByAnotherRequest = await tx.order.findUnique({
+          where: { checkoutKeyHash: input.checkoutKeyHash },
+          select: { id: true, orderNumber: true, userId: true },
+        });
+        if (
+          wonByAnotherRequest &&
+          wonByAnotherRequest.userId === (input.userId ?? null)
+        ) {
+          return {
+            id: wonByAnotherRequest.id,
+            orderNumber: wonByAnotherRequest.orderNumber,
+          };
+        }
+      }
+
+      let addressId = input.addressId ?? null;
+      // حفظ العنوان والطلبية في معاملة واحدة: إن خسر هذا الطلب سباق مفتاح
+      // checkout الفريد يُتراجع عن العنوان أيضًا، فلا تتراكم نسخ مكررة.
+      if (!addressId && input.userId && input.saveAddress) {
+        const saved = await tx.address.create({
+          data: {
+            userId: input.userId,
+            fullName: input.address.fullName,
+            phone: input.address.phone,
+            country: input.address.country,
+            province: input.address.province,
+            city: input.address.city,
+            addressLine1: input.address.addressLine1,
+            addressLine2: input.address.addressLine2 || null,
+            postalCode: input.address.postalCode || null,
+            nationalAddr: input.address.nationalAddress || null,
+          },
+          select: { id: true },
+        });
+        addressId = saved.id;
+      }
+
+      return tx.order.create({
+        data: {
       orderNumber,
       outOrderId,
+      checkoutKeyHash: input.checkoutKeyHash ?? null,
+      guestAccessHash: input.guestAccessToken
+        ? hashGuestAccess(input.guestAccessToken)
+        : null,
+      guestAccessExpiresAt: input.guestAccessToken
+        ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        : null,
       userId: input.userId ?? null,
-      addressId: input.addressId ?? null,
+      addressId,
       status: "PENDING_PAYMENT",
       shippingSnapshot: input.address as object,
       subtotalSar: summary.subtotalSar,
@@ -96,11 +199,26 @@ export async function createLocalOrder(
           maxDeliveryDays: l.maxDeliveryDays,
         })),
       },
-    },
-    select: { id: true, orderNumber: true },
-  });
+        },
+        select: { id: true, orderNumber: true },
+      });
+    });
 
-  return { orderId: order.id, orderNumber: order.orderNumber };
+    return { orderId: order.id, orderNumber: order.orderNumber };
+  } catch (error) {
+    // سباق إعادة الإرسال: المعاملة الخاسرة تتراجع بالكامل ثم تعيد الصف
+    // الذي أنشأته المعاملة الفائزة. أي تعارض فريد آخر يبقى خطأً حقيقيًا.
+    if (input.checkoutKeyHash && isUniqueConstraintError(error)) {
+      const existing = await prisma.order.findUnique({
+        where: { checkoutKeyHash: input.checkoutKeyHash },
+        select: { id: true, orderNumber: true, userId: true },
+      });
+      if (existing && existing.userId === (input.userId ?? null)) {
+        return { orderId: existing.id, orderNumber: existing.orderNumber };
+      }
+    }
+    throw error;
+  }
 }
 
 export type SourcingOutcome =
@@ -119,7 +237,15 @@ export async function sourceOrderFromAliExpress(
 ): Promise<SourcingOutcome> {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
-    include: { items: true, aeOrders: true },
+    include: {
+      items: true,
+      aeOrders: true,
+      payments: {
+        where: { status: "PAID" },
+        select: { id: true },
+        take: 1,
+      },
+    },
   });
 
   if (!order) {
@@ -144,6 +270,72 @@ export async function sourceOrderFromAliExpress(
       data: { status: "SOURCED", placedAt: order.placedAt ?? new Date() },
     });
     return { ok: true, aeOrderIds: order.aeOrders.map((a) => a.aeOrderId) };
+  }
+
+  if (order.needsManualReview) {
+    return {
+      ok: false,
+      errorCode: "MANUAL_REVIEW_REQUIRED",
+      message: "الطلبية موقوفة للمراجعة اليدوية ولا يجوز توريدها آليًا.",
+      retryable: false,
+    };
+  }
+
+  if (
+    order.payments.length === 0 &&
+    ["PAID", "SOURCING", "SOURCING_FAILED"].includes(order.status)
+  ) {
+    // حالة PAID وحدها ليست إثباتًا ماليًا؛ قد تكون بقايا من النسخة التي
+    // سبقت سجل PaymentIntent أو كتابةً إدارية خاطئة. نوسمها للمراجعة فقط
+    // إن لم يصل إثبات PAID بالتزامن بين القراءة والكتابة.
+    await prisma.order.updateMany({
+      where: {
+        id: order.id,
+        aeOrders: { none: {} },
+        payments: { none: { status: "PAID" } },
+      },
+      data: { needsManualReview: true },
+    });
+    return {
+      ok: false,
+      errorCode: "PAYMENT_PROOF_MISSING",
+      message: "لا يوجد إثبات دفع موثّق مرتبط بالطلبية؛ أوقفنا التوريد للمراجعة.",
+      retryable: false,
+    };
+  }
+
+  // آخر حاجز قبل عملية قد تصرف رصيد المتجر: JSON قاعدة البيانات وصفوفها
+  // ليست برهانًا نوعيًا وقت التشغيل، وقد تكون قديمة أو كُتبت بأداة إدارية.
+  const parsedAddress = shippingAddressSchema.safeParse(order.shippingSnapshot);
+  const validItems =
+    order.items.length > 0 &&
+    order.items.length <= 10 &&
+    order.items.every(
+      (item) =>
+        /^\d{5,32}$/u.test(item.aeProductId) &&
+        item.skuAttr.length >= 1 &&
+        item.skuAttr.length <= 96 &&
+        !/[\u0000-\u001f\u007f]/u.test(item.skuAttr) &&
+        Number.isSafeInteger(item.quantity) &&
+        item.quantity >= 1 &&
+        item.quantity <= 20 &&
+        /^[A-Za-z0-9_.:-]{1,64}$/u.test(item.logisticsServiceName),
+    );
+  if (!parsedAddress.success || !validItems) {
+    await prisma.order.updateMany({
+      where: {
+        id: order.id,
+        aeOrders: { none: {} },
+        payments: { some: { status: "PAID" } },
+      },
+      data: { needsManualReview: true },
+    });
+    return {
+      ok: false,
+      errorCode: "INVALID_SOURCING_SNAPSHOT",
+      message: "بيانات الشحن أو المواد المثبّتة غير صالحة؛ أوقفنا الشراء للمراجعة.",
+      retryable: false,
+    };
   }
 
   /**
@@ -173,6 +365,8 @@ export async function sourceOrderFromAliExpress(
         { status: { in: ["PAID", "SOURCING_FAILED"] } },
         { status: "SOURCING", updatedAt: { lt: staleCutoff } },
       ],
+      needsManualReview: false,
+      payments: { some: { status: "PAID" } },
     },
     data: { status: "SOURCING" },
   });
@@ -193,7 +387,7 @@ export async function sourceOrderFromAliExpress(
     };
   }
 
-  const addr = order.shippingSnapshot as unknown as ShippingAddress;
+  const addr = parsedAddress.data;
 
   try {
     const result = await placeOrder({
@@ -223,7 +417,19 @@ export async function sourceOrderFromAliExpress(
       })),
     });
 
-    // order_list مصفوفة — قد تنقسم الطلبية على عدة بائعين
+    // order_list مصفوفة — قد تنقسم الطلبية على عدة بائعين. لا نكتب
+    // SOURCED بلا أثر مورد فريد حتى لو خفّف مخطط الاستجابة مستقبلًا.
+    if (
+      result.aeOrderIds.length === 0 ||
+      new Set(result.aeOrderIds).size !== result.aeOrderIds.length
+    ) {
+      throw new AeApiError({
+        apiName: "aliexpress.ds.order.create",
+        code: "INVALID_ORDER_CREATE_RESPONSE",
+        message: "استجابة نجاح بلا معرّفات طلبيات فريدة",
+      });
+    }
+
     await prisma.$transaction([
       prisma.aeOrder.createMany({
         data: result.aeOrderIds.map((aeOrderId) => ({
@@ -257,7 +463,7 @@ export async function sourceOrderFromAliExpress(
         } catch (payErr) {
           console.error(
             `[orders] تعذّر الخصم لطلبية المنصة ${aeOrderId}:`,
-            payErr,
+            safeErrorKind(payErr),
           );
         }
       }
@@ -278,7 +484,10 @@ export async function sourceOrderFromAliExpress(
      * SOURCING_FAILED لا SOURCED: «تحتاج مراجعة» وصفٌ صادق لما جرى،
      * بينما SOURCED كانت تُخفي الطلبية عن لوحة المتابعة.
      */
-    if (e.code === "REPEATED_ORDER_ERROR") {
+    if (
+      e.code === "REPEATED_ORDER_ERROR" ||
+      e.code === "INVALID_ORDER_CREATE_RESPONSE"
+    ) {
       await prisma.order.update({
         where: { id: order.id },
         data: {
@@ -294,7 +503,9 @@ export async function sourceOrderFromAliExpress(
         ok: false,
         errorCode: e.code,
         message:
-          "الطلبية مسجّلة مسبقًا لدى المورّد. لن يُخصم المبلغ مرتين — سيراجعها فريقنا.",
+          e.code === "REPEATED_ORDER_ERROR"
+            ? "الطلبية مسجّلة مسبقًا لدى المورّد. لن يُخصم المبلغ مرتين — سيراجعها فريقنا."
+            : "تعذّرت مطابقة معرّفات الطلبية لدى المورّد. أوقفنا إعادة الشراء للمراجعة اليدوية.",
         retryable: false,
       };
     }
@@ -326,7 +537,13 @@ export async function sourceOrderFromAliExpress(
  */
 export async function markOrderPaid(orderId: string): Promise<boolean> {
   const res = await prisma.order.updateMany({
-    where: { id: orderId, status: "PENDING_PAYMENT" },
+    where: {
+      id: orderId,
+      status: "PENDING_PAYMENT",
+      needsManualReview: false,
+      // لا تصبح حالة الطلبية مصدرَ حقيقة بديلًا عن سجل الدفع الموثّق.
+      payments: { some: { status: "PAID" } },
+    },
     data: { status: "PAID" },
   });
   return res.count > 0;
@@ -347,9 +564,9 @@ export async function onPaymentSucceeded(orderId: string): Promise<void> {
       // ليست في انتظار الدفع: إمّا سُوّيت مسبقًا أو أُلغيت. لا نشتري.
       const order = await prisma.order.findUnique({
         where: { id: orderId },
-        select: { status: true },
+        select: { status: true, needsManualReview: true },
       });
-      if (order?.status !== "PAID") {
+      if (order?.status !== "PAID" || order.needsManualReview) {
         console.error(
           `[orders] وصل تأكيد دفع لطلبية حالتها ${order?.status ?? "غير موجودة"} — لم يُشترَ شيء.`,
         );
@@ -366,10 +583,13 @@ export async function onPaymentSucceeded(orderId: string): Promise<void> {
       await sendOrderPlacedMail(orderId);
     } else {
       console.error(
-        `[orders] فشل توريد الطلبية ${orderId} بعد الدفع: ${outcome.errorCode} — ${outcome.message}`,
+        `[orders] فشل توريد الطلبية ${orderId} بعد الدفع: ${outcome.errorCode}`,
       );
     }
   } catch (e) {
-    console.error(`[orders] خطأ غير متوقّع بعد دفع الطلبية ${orderId}:`, e);
+    console.error(
+      `[orders] خطأ غير متوقّع بعد دفع الطلبية ${orderId}:`,
+      safeErrorKind(e),
+    );
   }
 }

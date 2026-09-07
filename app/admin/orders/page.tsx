@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/session";
 import { HydrationBoundary, dehydrate } from "@tanstack/react-query";
 import { orderStatusLabel } from "@/components/order-status";
@@ -38,7 +39,11 @@ export default async function AdminOrdersPage(
   // حارس ذاتي — لا يُكتفى بحماية التخطيط (راجع requireAdmin). يسبق كل قراءة.
   await requireAdmin();
   const sp = await props.searchParams;
+  if (Object.keys(sp).some((key) => key !== "status") || Array.isArray(sp.status)) {
+    notFound();
+  }
   const statusParam = typeof sp.status === "string" ? sp.status : "";
+  if (statusParam && !isStatus(statusParam)) notFound();
   const status = isStatus(statusParam) ? statusParam : undefined;
 
   const [t, locale] = await Promise.all([getDictionary(), getLocale()]);

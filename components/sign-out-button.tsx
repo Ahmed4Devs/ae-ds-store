@@ -1,12 +1,11 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui";
+import { clearBrowserQueryCache } from "@/lib/query/client";
 
 export function SignOutButton({ label }: { label: string }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   return (
@@ -16,9 +15,13 @@ export function SignOutButton({ label }: { label: string }) {
       disabled={pending}
       onClick={() =>
         startTransition(async () => {
-          await authClient.signOut();
-          router.push("/");
-          router.refresh();
+          try {
+            await authClient.signOut();
+          } finally {
+            // امحُ ذاكرة TanStack ثم حمّل وثيقة جديدة لمسح Router/RSC cache.
+            clearBrowserQueryCache();
+            window.location.replace("/");
+          }
         })
       }
     >

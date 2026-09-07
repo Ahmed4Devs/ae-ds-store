@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { z } from "zod";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { ProductGrid } from "@/components/product-card";
 import { ButtonLink, EmptyState } from "@/components/ui";
@@ -11,6 +13,11 @@ export async function generateMetadata() {
 }
 
 const PAGE_SIZE = 24;
+const pageSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,3}$/u)
+  .transform(Number)
+  .pipe(z.number().int().min(1).max(1_000));
 
 /**
  * مختارات المتجر — المنشور من المرآة المحلية وحده.
@@ -23,7 +30,14 @@ export default async function CollectionPage(
   props: PageProps<"/collection">,
 ) {
   const sp = await props.searchParams;
-  const page = Math.max(1, Number(typeof sp.page === "string" ? sp.page : "1") || 1);
+  if (Object.keys(sp).some((key) => key !== "page") || Array.isArray(sp.page)) {
+    notFound();
+  }
+  const parsedPage = pageSchema.safeParse(
+    typeof sp.page === "string" ? sp.page : "1",
+  );
+  if (!parsedPage.success) notFound();
+  const page = parsedPage.data;
 
   const [result, t, locale] = await Promise.all([
     publishedCards({ page, pageSize: PAGE_SIZE }),

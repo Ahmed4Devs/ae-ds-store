@@ -13,7 +13,7 @@
 | اللغة | TypeScript |
 | التنسيق | Tailwind CSS v4 |
 | قاعدة البيانات | PostgreSQL عبر Prisma 7.10 (driver adapter) |
-| المصادقة | better-auth |
+| المصادقة | Better Auth 1.7.3 + TOTP MFA للإدارة |
 | التحقق | zod |
 | حالة الخادم على العميل | TanStack Query v5 |
 
@@ -23,20 +23,29 @@
 
 ```bash
 npm install
-cp .env.example .env          # ثم عدّل القيم
+cp .env.example .env          # ثم ولّد BETTER_AUTH_SECRET وعدّل القيم
 npm run db:deploy             # تطبيق الترحيلات
-npm run db:seed               # حسابا مسؤول وعميل
 npm run dev
 ```
 
 المتجر على <http://localhost:3000>
 
-**حسابات البذر:**
+### بذر حسابات تطوير اختيارية
 
-| الدور | البريد | كلمة المرور |
-| --- | --- | --- |
-| مسؤول | `admin@ae-ds-store.local` | `Admin12345` |
-| عميل | `customer@ae-ds-store.local` | `Customer12345` |
+لا توجد بيانات اعتماد ثابتة في المستودع. ضع أسماء وبريدين وكلمتَي مرور
+عشوائيتين مختلفتين (20–128 محرفًا) في متغيّرات `SEED_*` داخل `.env`.
+اجعل `SEED_CONFIRM` مرتبطًا بالمضيف والمنفذ والقاعدة والمخطط في
+`DATABASE_URL`؛ فمثلًا للرابط الافتراضي تكون قيمته
+`seed:localhost:5432:ae_ds_store:public`، ثم شغّل:
+
+```bash
+NODE_ENV=development npm run db:seed
+```
+
+في PowerShell اضبط المتغيّرين بـ `$env:NODE_ENV` و`$env:SEED_CONFIRM` قبل
+الأمر. يرفض البذر الإنتاج، ويرفض تعديل مستخدم موجود أو ترقيته، وينشئ
+المستخدم وسجل الاعتماد معًا داخل معاملة واحدة، ولا يطبع كلمة مرور أو بريدًا.
+لإنشاء كلمة قوية استخدم مثلًا `openssl rand -base64 32` مرتين.
 
 ---
 
@@ -148,7 +157,7 @@ Next.js، ولا تضيف حجمًا. ما تقدّمه axios زيادةً (ال
 | --- | --- | --- |
 | `GET /api/shipping` | خيارات الشحن لكمية محددة | تحقق zod من المدخلات |
 | `GET /api/orders/[orderNumber]/tracking` | حالة الطلبية وتتبّعها | ملكية الطلبية |
-| `GET /api/admin/orders` | طلبيات الإدارة وإحصاءاتها | دور ADMIN |
+| `GET /api/admin/orders` | طلبيات الإدارة وإحصاءاتها | ADMIN + بريد مؤكّد + TOTP موثّق للجلسة |
 | `POST /api/payments/webhook` | إشعار بوابة الدفع | توقيع المزوّد بمقارنة ثابتة الزمن |
 | `GET/POST /api/cron/sync-orders` | المزامنة الدورية | `CRON_SECRET` بمقارنة ثابتة الزمن |
 
@@ -231,18 +240,54 @@ Next.js، ولا تضيف حجمًا. ما تقدّمه axios زيادةً (ال
 ## التحقق
 
 ```bash
-npm run verify            # الكل (135 فحصًا)
-# ثم مع خادم يعمل:
-npm run verify:query      # 14 فحصًا إضافيًا
+npm run verify            # الكل؛ شغّله بمتغيرات قاعدة الاختبار أدناه
+# مع خادم يعمل يدويًا:
+npm run verify:query      # 11 فحصًا عامًا + دخول ADMIN اختياري
+# أو دورة HTTP معزولة كاملة تنشئ الخادم وADMIN+TOTP ثم تنظفهما:
+npm run verify:query:isolated # 14 فحصًا بلا تخطٍّ
+npm run security:preflight # read-only قبل prisma migrate deploy
 
-npm run verify:ae         # طبقة التكامل والتوقيع            (24)
+npm run verify:migrations # السلسلة كاملة في schema عابر     (12 ترحيلًا)
+npm run verify:boundaries # الكوكيز/JSON/الأحجام والسجل       (23)
+npm run verify:ae         # طبقة التكامل والتوقيع            (27)
+npm run verify:ae-client  # النقل الحي والـ MIME والحجم        (5)
 npm run verify:pricing    # التسعير وقواعد السعودية          (24)
-npm run verify:auth       # المصادقة                          (8)
-npm run verify:orders     # دورة حياة الطلبية                (21)
-npm run verify:payments   # الدفع والإلغاء                   (40)
-npm run verify:store      # الصرف والنشر والتفويض والفاتورة  (28)
-npm run verify:query      # مسارات API (يتطلّب خادمًا يعمل)  (14)
+npm run verify:auth       # حساب وTOTP واسترداد في schema عابر (40)
+npm run verify:orders     # دورة حياة الطلبية                (41)
+npm run verify:payments   # الدفع والإلغاء                   (56)
+npm run verify:store      # الصرف والنشر والتفويض والفاتورة  (26+ حسب البيانات)
+npm run verify:query      # مسارات API؛ 11 عامًا + ADMIN اختياري
 ```
+
+لاختبار مسار الإدارة الحقيقي أيضًا، مرّر مؤقتًا وقت التشغيل فقط
+`VERIFY_ADMIN_EMAIL` و`VERIFY_ADMIN_PASSWORD` و`VERIFY_ADMIN_TOTP_CODE`.
+لا تحفظ رمز TOTP أو كلمة المرور في ملف متتبّع؛ تمسح الأداة جلسة التحقق في
+`finally`. عند غياب القيم تتخطى هذا الجزء ولا تعتبره نجاحًا أو فشلًا.
+
+`verify:query:isolated` هو المسار المستخدم في CI: ينشئ schema عابرًا، يطبق
+الترحيلات، يبذر حسابي اختبار عشوائيين، يسجّل TOTP للمسؤول في الذاكرة فقط،
+يشغّل Next على منفذ محلي عشوائي، وينفذ 14 فحص HTTP ثم يوقف شجرة الخادم ويحذف
+schema في `finally`. يحتاج تأكيدًا مطابقًا لهدف القاعدة حتى لا يُشغّل مصادفةً:
+
+```bash
+VERIFY_QUERY_CONFIRM="query-test:localhost:5432:ae_ds_store" npm run verify:query:isolated
+```
+
+استخدم له قاعدة تطوير/CI ودور ترحيل يملك `CREATE SCHEMA`؛ لا تشغّله على
+الإنتاج. لا يطبع كلمة المرور أو سر TOTP أو رموز الاسترداد.
+
+ينشئ `verify:auth` تلقائيًا schema عابرًا باسم يحمل `auth_test`، يطبّق فيه
+كل الترحيلات، ثم يختبر دورة كلمة المرور وTOTP ورمز الاسترداد أحادي الاستخدام
+ويحذف schema في `finally`. يحتاج رابط قاعدة يملك `CREATE SCHEMA` (دور CI أو
+الترحيل، لا دور التطبيق المحدود)، ولا يرسل بريدًا خارجيًا:
+
+```bash
+DATABASE_URL="postgresql://.../ae_ds_store" npm run verify:auth
+```
+
+لا تشغّله على قاعدة الإنتاج. العامل الداخلي يرفض العمل إن لم تضبط له الأداة
+تلقائيًا `NODE_ENV=test` و`AUTH_VERIFY_TEST_DB=true` و`MAIL_PROVIDER=console`،
+ويشترط أن يحمل schema المعزول مقطع `test` مستقلًا.
 
 يتضمّن `verify:ae` مطابقة السلسلة الأساسية للتوقيع مع المثال الحرفي في
 المستند 836، والتأكد من أن `skuAttr` يختلف عن `aeSkuId`، ومن ارتداد
@@ -259,7 +304,7 @@ npm run verify:query      # مسارات API (يتطلّب خادمًا يعمل
 
 ## قبل الإطلاق
 
-ما كان ناقصًا صار مبنيًّا، وما بقي يحتاج **حسابات ومفاتيح** لا شيفرة:
+القائمة التالية تفصل ما بُني عما بقي شرطًا تشغيليًا:
 
 - [x] **بوابة دفع** — طبقة مزوّدين كاملة في [`lib/payments/`](lib/payments/):
       `manual` (تحويل بنكي وتأكيد إداري) و`moyasar` و`tap` منفَّذتان مقابل
@@ -273,20 +318,51 @@ npm run verify:query      # مسارات API (يتطلّب خادمًا يعمل
       تُدار يدويًا لأن فئة `aliexpress.issue.*` للبائعين لا للمشترين
 - [x] **تأكيد البريد واستعادة كلمة المرور** — مُرسِل بثلاثة مزوّدين
       ([`lib/mail/`](lib/mail/)) وصفحتا `/forgot-password` و`/reset-password`
+- [x] **MFA للإدارة** — TOTP مشفّر ورموز استرداد أحادية الاستخدام وقفل بعد
+      خمس محاولات، مع إثبات مرتبط بالجلسة نفسها. الجلسات التي سبقت التفعيل
+      لا تكتسب صلاحية الإدارة تلقائيًا، و`trusted-device` معطّل في واجهة HTTP.
+      لا تكشف الواجهة سر TOTP المسجّل ولا تعطّله، وتجديد رموز الاسترداد يتطلب
+      كلمة المرور وجلسة مسؤول اجتازت العامل الثاني
 - [x] **تجديد رمز AliExpress** تلقائيًا ([`lib/aliexpress/token.ts`](lib/aliexpress/token.ts))
 - [x] `try_to_pay` صار متغيّر بيئة (`AE_TRY_TO_PAY`) لا ثابتًا في الشيفرة
 
 يبقى قبل الإطلاق:
 
+- [ ] **بيئة إنتاج مغلقة آمنًا** — `BETTER_AUTH_URL` و`STORE_PUBLIC_URL`
+      يستخدمان HTTPS والأصل نفسه، و`BETTER_AUTH_SECRET` عشوائي بطول 48+
+      محرفًا، و`AUTH_REQUIRE_EMAIL_VERIFICATION=true`
+- [ ] **تسجيل كل مسؤول حالي في MFA** — افتح `/account` لكل حساب ADMIN، امسح
+      QR واحفظ رموز الاسترداد ثم أثبت أول رمز. لوحة الإدارة مقفلة برمجيًا
+      للحساب والجلسة حتى يكتمل ذلك؛ لا تعتبر وجود الشيفرة وحده تسجيلًا للعامل
+- [ ] **تدوير الأسرار وبيانات الإدارة** — اعتبر كل قيمة سبق أن حُفظت في ملف
+      أو سجل مكشوفة: غيّر كلمات مرور المسؤولين، ألغِ كل الجلسات القديمة، ودوّر
+      `BETTER_AUTH_SECRET` وأسرار الدفع والـ cron وAliExpress من لوحات المزوّدين؛
+      نفّذ تدوير سر Better Auth **قبل** تسجيل TOTP، لأنه يشفّر أسرار TOTP
+      ورموز الاسترداد أيضًا. تدويره لاحقًا يتطلب إبطال سجلات MFA والجلسات
+      وإعادة تسجيل كل مسؤول وفق إجراء الاسترداد في `SECURITY.md`
+- [ ] **فصل دورَي PostgreSQL** — اجعل `DATABASE_URL` لدور تشغيل محدود بلا
+      DDL ولا `SUPERUSER/BYPASSRLS/CREATEROLE/CREATEDB`، واجعل
+      `MIGRATION_DATABASE_URL` لدور ترحيل منفصل لا يصل إلى حاوية التشغيل.
+      استخدم `sslmode=verify-full` للقاعدة البعيدة متى أمكن، واضبط
+      `DB_POOL_MAX` وفق عدد النسخ. بعد الترحيلات، شغّل كمالك القاعدة
+      `psql "$MIGRATION_DATABASE_URL" --file=scripts/provision-runtime-role.sql`؛
+      سيطلب كلمة مرور عشوائية تفاعليًا. حدّث `DATABASE_URL` إلى `ae_store_app`
+      ثم شغّل `npm run security:check` وتأكد أن كل فحوص الصلاحيات تمر
 - [ ] **حساب لدى مزوّد دفع** وضبط `PAYMENT_PROVIDER` ومفاتيحه و`PAYMENT_WEBHOOK_SECRET`
 - [ ] **رقم ضريبي حقيقي** في `STORE_VAT_NUMBER` — الفاتورة ترفض الصدور بدونه
-- [ ] **مُرسِل بريد حقيقي** (`MAIL_PROVIDER=smtp` أو `resend`) ثم تفعيل
-      `AUTH_REQUIRE_EMAIL_VERIFICATION`
+- [ ] **مُرسِل بريد حقيقي** (`MAIL_PROVIDER=smtp` أو `resend`) مع
+      `AUTH_REQUIRE_EMAIL_VERIFICATION=true`؛ يبقى التأكيد مفروضًا برمجيًا أيضًا
+- [ ] **تشفير رموز AliExpress** — ولّد `AE_TOKEN_ENCRYPTION_KEY` من 32 بايت
+      واحفظه في مدير أسرار؛ وهو مطلوب تلقائيًا عند `AE_MODE=live`. اترك
+      `AE_API_LOG_RETENTION_DAYS=30` أو اخفضه وفق سياسة الخصوصية
 - [ ] **تفويض الحساب كدروبشيبينغ** ثم `AE_TRY_TO_PAY=true`
 - [ ] **بروكسي عكسي** يضبط `X-Forwarded-For` ويُملأ به `TRUSTED_PROXIES`؛
-      بدونه يُعطَّل تتبّع العنوان عمدًا ويسقط الخنق إلى مفتاح لا يُزوَّر
-- [ ] **مخزن مشترك للخنق** (Redis) عند النشر بأكثر من نسخة —
-      [`lib/rate-limit.ts`](lib/rate-limit.ts) في الذاكرة لكل نسخة
+      تشغيل الإنتاج خارج Vercel يفشل عند فراغه، ويجب منع الوصول المباشر إلى
+      الأصل. على Vercel اتركه فارغًا ليستخدم التطبيق الترويسة المحمية
+      `x-vercel-forwarded-for` بدل ترويسة العميل العامة
+- [ ] **WAF/مخزن مشترك للحدود العامة** عند النشر بأكثر من نسخة — حدود
+      المصادقة نفسها مشتركة وذرّية في PostgreSQL، لكن حدود التصفّح العامة في
+      [`lib/rate-limit.ts`](lib/rate-limit.ts) تبقى محلية لكل نسخة
 - [ ] مراجعة `DEFAULT_MARGIN_PERCENT` بحيث يستوعب المرتجعات وتقلّب الصرف
 - [ ] ترقيم تسلسلي للفواتير — الرقم الحالي مشتقّ من رقم الطلبية العشوائي،
       وتتطلّب المرحلة الثانية من الفوترة تسلسلًا حقيقيًا
@@ -319,10 +395,11 @@ DATABASE_URL="postgresql://user:pass@localhost:5432/postgres?schema=nextstore"
 
 - **Prisma 7.10** هي أحدث نسخة **مستقرّة**؛ وسم `latest` يشير حاليًا إلى
   `8.0.0-rc` وهي مرشّحة غير مستقرّة.
-- **`@better-auth/cli generate`** يُنتج مخطّطًا ينقصه حقل `issuer` الذي
-  يتطلّبه محرّك better-auth 1.7 نفسه. المخطّط هنا يتبع تعريف وقت التشغيل.
-- تحذير `npm audit` بشأن `deepmerge-ts` يأتي من `@prisma/config`، وهي
-  تبعية لأداة سطر الأوامر وقت البناء لا لشيفرة التشغيل.
+- **Better Auth 1.7.3** هو الحد الأدنى المقصود هنا؛ ترحيل الهوية يحتفظ بحقل
+  `issuer` القديم اختياريًا ويعيد التفرد إلى `(providerId, accountId)` وفق
+  سلوك الإصدار المثبّت.
+- يمر `npm audit --audit-level=high` حاليًا بلا ثغرات معروفة. لا تُجرَ قفزات
+  Prisma/TypeScript/ESLint الرئيسية تلقائيًا؛ اختبرها في فرع ترقية مستقل.
 
 ---
 

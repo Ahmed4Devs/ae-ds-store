@@ -33,10 +33,12 @@ export function CheckoutForm({
   isLoggedIn,
   defaults,
   labels,
+  checkoutToken,
 }: {
   isLoggedIn: boolean;
   defaults?: Defaults;
   labels: Labels;
+  checkoutToken: string;
 }) {
   const [state, formAction] = useActionState<CheckoutState, FormData>(
     checkoutAction,
@@ -47,6 +49,7 @@ export function CheckoutForm({
 
   return (
     <form action={formAction} className="space-y-5">
+      <input type="hidden" name="checkoutToken" value={checkoutToken} />
       <Card className="p-5">
         <p className="mb-4 font-semibold">{labels.shippingAddress}</p>
 

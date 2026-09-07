@@ -112,6 +112,19 @@ export function AuthForm({
         return;
       }
 
+      // نجاح كلمة المرور لمستخدم MFA لا يعني اكتمال المصادقة ولا وجود جلسة.
+      // ملحق العميل يوجّه إلى صفحة العامل الثاني؛ منع الانتقال إلى الحساب
+      // هنا يغلق سباقًا كان قد يتجاوز واجهة التحدّي بصريًا.
+      if (
+        mode === "signin" &&
+        res.data &&
+        typeof res.data === "object" &&
+        "twoFactorRedirect" in res.data &&
+        res.data.twoFactorRedirect === true
+      ) {
+        return;
+      }
+
       router.push("/account");
       router.refresh();
     });

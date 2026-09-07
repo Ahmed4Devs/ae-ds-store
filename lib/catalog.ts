@@ -100,8 +100,16 @@ export async function browse(params: {
 export async function publishedCards(
   params: { page?: number; pageSize?: number } = {},
 ): Promise<{ cards: CatalogCard[]; total: number; page: number }> {
-  const page = Math.max(1, params.page ?? 1);
-  const pageSize = params.pageSize ?? 24;
+  // حد داخلي مستقل عن الصفحة: يمنع مستدعيًا مستقبليًا من تمرير Infinity
+  // أو skip ضخم إلى Prisma حتى إن نسي التحقق عند حد HTTP.
+  const page =
+    Number.isSafeInteger(params.page) && (params.page ?? 0) >= 1
+      ? Math.min(params.page!, 1_000)
+      : 1;
+  const pageSize =
+    Number.isSafeInteger(params.pageSize) && (params.pageSize ?? 0) >= 1
+      ? Math.min(params.pageSize!, 100)
+      : 24;
 
   const [rows, total, fxRate] = await Promise.all([
     prisma.product.findMany({
@@ -179,7 +187,7 @@ export const fetchAndMirrorProduct = cache(
         create: {
           aeProductId: detail.aeProductId,
           title: detail.title,
-          description: detail.descriptionHtml,
+          description: detail.descriptionText,
           mainImageUrl: detail.imageUrls[0] ?? "",
           imageUrls: detail.imageUrls,
           aeCategoryId: detail.categoryId,
@@ -191,7 +199,7 @@ export const fetchAndMirrorProduct = cache(
         },
         update: {
           title: detail.title,
-          description: detail.descriptionHtml,
+          description: detail.descriptionText,
           mainImageUrl: detail.imageUrls[0] ?? "",
           imageUrls: detail.imageUrls,
           rating: detail.rating ?? undefined,

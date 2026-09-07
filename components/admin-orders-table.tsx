@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Card, EmptyState } from "@/components/ui";
 import { OrderStatusBadge } from "@/components/order-status";
 import { useAdminOrders } from "@/lib/query/hooks";
-import { formatSar } from "@/lib/pricing";
+import { formatSar } from "@/lib/pricing/format";
 import { formatDateAr } from "@/lib/ksa";
 import { fill, type Dictionary, type Locale } from "@/lib/i18n/shared";
 import type { AdminOrderRowDto, AdminStatsDto } from "@/lib/query/keys";

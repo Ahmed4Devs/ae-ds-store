@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { Badge, Card, cx } from "@/components/ui";
 import { useUpdateCartItem } from "@/lib/query/hooks";
-import { formatSar } from "@/lib/pricing";
+import { formatSar } from "@/lib/pricing/format";
 import type { CartLine } from "@/lib/cart-service";
 import type { Locale } from "@/lib/i18n/shared";
 
@@ -75,7 +75,12 @@ function CartLineRow({
       >
         {line.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={line.imageUrl} alt="" className="size-full object-cover" />
+          <img
+            src={line.imageUrl}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="size-full object-cover"
+          />
         ) : null}
       </Link>
 

@@ -10,6 +10,7 @@ import { env } from "@/lib/env";
 import { effectiveFxRateAsync } from "@/lib/fx";
 import { retailUnitPriceSar } from "@/lib/pricing";
 import { getDictionary, getLocale } from "@/lib/i18n";
+import { notFound } from "next/navigation";
 
 export async function generateMetadata() {
   const t = await getDictionary();
@@ -22,7 +23,14 @@ export default async function AdminProductsPage(
   // حارس ذاتي — لا يُكتفى بحماية التخطيط (راجع requireAdmin). يسبق كل قراءة.
   await requireAdmin();
   const sp = await props.searchParams;
-  const q = (typeof sp.q === "string" ? sp.q : "").trim();
+  if (Object.keys(sp).some((key) => key !== "q") || Array.isArray(sp.q)) {
+    notFound();
+  }
+  const rawQuery = typeof sp.q === "string" ? sp.q : "";
+  if (rawQuery.length > 120 || /[\u0000-\u001f\u007f]/u.test(rawQuery)) {
+    notFound();
+  }
+  const q = rawQuery.trim().replace(/\s+/gu, " ");
 
   const cfg = env();
   const [t, locale] = await Promise.all([getDictionary(), getLocale()]);

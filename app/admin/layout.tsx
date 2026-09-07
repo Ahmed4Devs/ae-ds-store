@@ -1,10 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/session";
+import { getCurrentUser, isAdmin } from "@/lib/session";
 import { getDictionary } from "@/lib/i18n";
 
 export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
-  const [user, t] = await Promise.all([getCurrentUser(), getDictionary()]);
+  const [user, hasAdminAccess, t] = await Promise.all([
+    getCurrentUser(),
+    isAdmin(),
+    getDictionary(),
+  ]);
 
   const nav = [
     { href: "/admin", label: t.admin.overview },
@@ -16,7 +20,7 @@ export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
 
   // حماية على مستوى التخطيط: كل صفحة تحته تمر من هنا
   if (!user) redirect("/login");
-  if ((user as { role?: string }).role !== "ADMIN") redirect("/account");
+  if (!hasAdminAccess) redirect("/account");
 
   return (
     <div className="flex min-h-screen flex-col">

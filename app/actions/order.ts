@@ -16,14 +16,14 @@ import { fill, getDictionary } from "@/lib/i18n";
  */
 
 const customerCancelSchema = z.object({
-  orderNumber: z.string().min(1),
-  reason: z.string().max(500).optional(),
-});
+  orderNumber: z.string().regex(/^AE-\d{8}-[0-9A-F]{6}$/),
+  reason: z.string().trim().max(500).optional(),
+}).strict();
 
 const adminCancelSchema = z.object({
-  orderId: z.string().min(1),
-  reason: z.string().max(500).optional(),
-});
+  orderId: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  reason: z.string().trim().max(500).optional(),
+}).strict();
 
 export type OrderActionResult = { ok: boolean; message: string };
 

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { env } from "@/lib/env";
 import { syncActiveOrders } from "@/lib/order-sync";
 import { expireStaleIntents, recoverStrandedPaidIntents } from "@/lib/payments";
+import { purgeExpiredSecurityState } from "@/lib/security-retention";
 
 /**
  * المدخل المجدول لمزامنة الطلبيات.
@@ -28,16 +29,11 @@ function secretMatches(presented: string, expected: string): boolean {
   return timingSafeEqual(a, b);
 }
 
-/**
- * السرّ من ترويسة Authorization أولًا، ثم من ?secret= كبديل موثّق:
- * Vercel Cron لا يسمح بإضافة ترويسات مخصّصة إلى الطلب المجدول.
- */
+/** السرّ لا يُقبل في URL كي لا يظهر في سجلّات الطلب أو التاريخ أو التحليلات. */
 function presentedSecret(request: Request): string {
   const auth = request.headers.get("authorization") ?? "";
-  if (auth.toLowerCase().startsWith("bearer ")) {
-    return auth.slice("bearer ".length).trim();
-  }
-  return new URL(request.url).searchParams.get("secret") ?? "";
+  const match = /^Bearer ([^\s]+)$/i.exec(auth);
+  return match?.[1] ?? "";
 }
 
 async function handle(request: Request): Promise<NextResponse> {
@@ -47,24 +43,33 @@ async function handle(request: Request): Promise<NextResponse> {
   // استدعاءه بلا حدّ فيستنزف حصة استدعاءات المنصّة ويوقف المتجر كلّه؛
   // ولذلك نعيد 404 حتى لا نكشف أصلًا أن المسار موجود.
   if (!expected) {
-    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404, headers: NO_STORE });
+    return NextResponse.json(
+      { error: "NOT_FOUND" },
+      { status: 404, headers: NO_STORE },
+    );
   }
 
   // استجابة واحدة للسرّ الخاطئ وللسرّ الغائب — أي تمييز بينهما يُخبر
   // المتطفّل أنه على الطريق الصحيح.
   if (!secretMatches(presentedSecret(request), expected)) {
-    return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401, headers: NO_STORE });
+    return NextResponse.json(
+      { error: "UNAUTHORIZED" },
+      { status: 401, headers: NO_STORE },
+    );
   }
 
   const sync = await syncActiveOrders(50);
 
   // انتهاء نيّات الدفع الراكدة يجري في الدورة نفسها: هي أيضًا مهمة كنس
   // دورية، وفصلها في مسار ثانٍ يعني سرًّا ثانيًا ومهمة مجدولة ثانية بلا داعٍ.
-  const expiredIntents = await expireStaleIntents();
-
-  // استدراك الطلبيات المدفوعة العالقة: نيّة سُوّيت PAID لكن سقط الخادم قبل
-  // شرائها. المهمة الدورية هي شبكة الأمان التي تُعيد تشغيل ما بعد الدفع.
-  const recoveredIntents = await recoverStrandedPaidIntents();
+  const [expiredIntents, recoveredIntents, retention] = await Promise.all([
+    expireStaleIntents(),
+    // استدراك الطلبيات المدفوعة العالقة: نيّة سُوّيت PAID لكن سقط الخادم قبل
+    // شرائها. المهمة الدورية هي شبكة الأمان التي تُعيد تشغيل ما بعد الدفع.
+    recoverStrandedPaidIntents(),
+    // جلسات/رموز/قدرات منتهية وسجلات AliExpress الأقدم من سياسة الاحتفاظ.
+    purgeExpiredSecurityState(),
+  ]);
 
   return NextResponse.json(
     {
@@ -73,6 +78,7 @@ async function handle(request: Request): Promise<NextResponse> {
       errors: sync.errors,
       expiredIntents,
       recoveredIntents,
+      retention,
     },
     { headers: NO_STORE },
   );

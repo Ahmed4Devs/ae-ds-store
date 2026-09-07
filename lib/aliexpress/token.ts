@@ -1,4 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { env } from "@/lib/env";
+import {
+  decryptSecret,
+  encryptSecret,
+  isEncryptedSecret,
+  secretEncryptionEnabled,
+} from "@/lib/crypto/secrets";
+import { safeErrorKind } from "@/lib/safe-log";
 import { AeApiError } from "./errors";
 
 /**
@@ -100,17 +108,46 @@ export async function getAccessToken(): Promise<string> {
 
   if (!row) return env().AE_ACCESS_TOKEN;
 
-  if (isStale(row.expiresAt) && row.refreshToken) {
+  const accessToken = decryptSecret(row.accessToken, "ae-access-token");
+  const refreshToken = row.refreshToken
+    ? decryptSecret(row.refreshToken, "ae-refresh-token")
+    : null;
+
+  // ترقية صامتة للصفوف القديمة المكتوبة بنص صريح. الشرط على القيم القديمة
+  // يمنع أن نطغى على تجديد متزامن كتب رموزًا أحدث.
+  if (
+    secretEncryptionEnabled() &&
+    (!isEncryptedSecret(row.accessToken) ||
+      (row.refreshToken !== null && !isEncryptedSecret(row.refreshToken)))
+  ) {
+    await prisma.aeToken.updateMany({
+      where: {
+        id: ROW_ID,
+        accessToken: row.accessToken,
+        refreshToken: row.refreshToken,
+      },
+      data: {
+        accessToken: encryptSecret(accessToken, "ae-access-token"),
+        refreshToken: refreshToken
+          ? encryptSecret(refreshToken, "ae-refresh-token")
+          : null,
+      },
+    });
+  }
+
+  if (isStale(row.expiresAt) && refreshToken) {
     const res = await refreshAccessToken();
     if (res.ok) {
       const fresh = await prisma.aeToken.findUnique({ where: { id: ROW_ID } });
-      if (fresh) return fresh.accessToken;
+      if (fresh) {
+        return decryptSecret(fresh.accessToken, "ae-access-token");
+      }
     }
     // فشل التجديد: نعيد الرمز القائم ونترك المنصة تحكم عليه. ربما ما زال
     // صالحًا — الهامش احتياطي لا انتهاء فعلي.
   }
 
-  return row.accessToken;
+  return accessToken;
 }
 
 /**
@@ -130,17 +167,77 @@ export async function refreshAccessToken(): Promise<RefreshOutcome> {
 
 async function doRefresh(): Promise<RefreshOutcome> {
   const prisma = await db();
-  const row = await prisma.aeToken.findUnique({ where: { id: ROW_ID } });
-  const refreshToken = row?.refreshToken || env().AE_REFRESH_TOKEN;
-
-  if (!refreshToken) {
-    const message =
-      "لا يوجد رمز تجديد. اضبط AE_REFRESH_TOKEN واستورده، أو أعد التفويض من لوحة AliExpress.";
-    await recordError(message);
-    return { ok: false, message };
+  const requestedAt = new Date();
+  let row = await prisma.aeToken.findUnique({ where: { id: ROW_ID } });
+  if (!row && (await seedTokenFromEnv())) {
+    row = await prisma.aeToken.findUnique({ where: { id: ROW_ID } });
   }
 
+  if (!row) {
+    return { ok: false, message: "لا يوجد رمز وصول مخزّن لبدء التجديد." };
+  }
+
+  const leaseId = randomUUID();
+  const leaseUntil = new Date(Date.now() + 45_000);
+  const claimed = await prisma.aeToken.updateMany({
+    where: {
+      id: ROW_ID,
+      OR: [
+        { refreshLeaseUntil: null },
+        { refreshLeaseUntil: { lt: new Date() } },
+      ],
+    },
+    data: { refreshLeaseId: leaseId, refreshLeaseUntil: leaseUntil },
+  });
+
+  if (claimed.count === 0) {
+    // نسخة أخرى تجدّد الآن. ننتظر مدة محدودة ثم نستخدم نتيجتها؛ لا نرسل
+    // refresh token نفسه بالتوازي لأن بعض المزوّدين يبطله عند كل تدوير.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const fresh = await prisma.aeToken.findUnique({ where: { id: ROW_ID } });
+      if (fresh && !fresh.refreshLeaseId && !isStale(fresh.expiresAt)) {
+        return { ok: true, expiresAt: fresh.expiresAt };
+      }
+      if (fresh && !fresh.refreshLeaseId) {
+        return {
+          ok: false,
+          message: fresh.lastError ?? "فشل تجديد الرمز في نسخة أخرى.",
+        };
+      }
+    }
+    return { ok: false, message: "تجديد رمز الوصول جارٍ في نسخة أخرى." };
+  }
+
+  // نعيد القراءة بعد امتلاك المزلاج؛ ربما جدّدت نسخة سابقة الرمز قبل أن
+  // نأخذ المزلاج مباشرةً، فلا داعي لتدويره مرة أخرى.
+  row = await prisma.aeToken.findUnique({ where: { id: ROW_ID } });
+  if (!row || row.refreshLeaseId !== leaseId) {
+    return { ok: false, message: "تعذّر امتلاك مزلاج تجديد الرمز." };
+  }
+  if (
+    row.lastRefreshedAt &&
+    row.lastRefreshedAt.getTime() >= requestedAt.getTime()
+  ) {
+    await releaseRefreshLease(leaseId);
+    return { ok: true, expiresAt: row.expiresAt };
+  }
+
+  const storedRefreshToken = row?.refreshToken ?? null;
   try {
+    // فك الرمز داخل كتلة الحماية كي يُحرَّر المزلاج حتى إذا تغيّر مفتاح
+    // التشفير أو تلف ciphertext المخزّن.
+    const refreshToken = storedRefreshToken
+      ? decryptSecret(storedRefreshToken, "ae-refresh-token")
+      : env().AE_REFRESH_TOKEN;
+
+    if (!refreshToken) {
+      const message =
+        "لا يوجد رمز تجديد. اضبط AE_REFRESH_TOKEN واستورده، أو أعد التفويض من لوحة AliExpress.";
+      await releaseRefreshLease(leaseId, message);
+      return { ok: false, message };
+    }
+
     const { callAe } = await import("./client");
     const { data } = await callAe<AeRefreshResponse>(
       REFRESH_API,
@@ -153,7 +250,7 @@ async function doRefresh(): Promise<RefreshOutcome> {
     const accessToken = data.access_token;
     if (!accessToken) {
       const message = "استجابة التجديد لا تحمل رمز وصول.";
-      await recordError(message);
+      await releaseRefreshLease(leaseId, message);
       return { ok: false, message };
     }
 
@@ -164,14 +261,19 @@ async function doRefresh(): Promise<RefreshOutcome> {
     );
 
     const nextData = {
-      accessToken,
+      accessToken: encryptSecret(accessToken, "ae-access-token"),
       // المنصة تُدوّر رمز التجديد أحيانًا وتعيد واحدًا جديدًا — تجاهله
       // يعني أن التجديد القادم يفشل بعد انتهاء القديم.
-      refreshToken: data.refresh_token || refreshToken,
+      refreshToken: encryptSecret(
+        data.refresh_token || refreshToken,
+        "ae-refresh-token",
+      ),
       expiresAt,
       refreshExpiresAt,
       lastRefreshedAt: new Date(),
       lastError: null,
+      refreshLeaseId: null,
+      refreshLeaseUntil: null,
     };
 
     if (row) {
@@ -184,12 +286,27 @@ async function doRefresh(): Promise<RefreshOutcome> {
        * كتابة تنجح والثانية تُصيب صفرًا فتُهمَل بلا ضرر.
        */
       const written = await prisma.aeToken.updateMany({
-        where: { id: ROW_ID, refreshToken },
+        where: {
+          id: ROW_ID,
+          refreshToken: storedRefreshToken,
+          refreshLeaseId: leaseId,
+        },
         data: nextData,
       });
       if (written.count === 0) {
-        // سبقنا تجديدٌ آخر بنجاح — رمزه أحدث، فلا نلمس ما كتبه.
-        return { ok: true, expiresAt };
+        // انتهت مهلة مزلاجنا أو استولت نسخة أخرى عليه. لا نزعم النجاح إلا
+        // إذا كانت النسخة الأخرى قد خزّنت بالفعل رمزًا حديثًا.
+        const current = await prisma.aeToken.findUnique({
+          where: { id: ROW_ID },
+          select: { expiresAt: true, lastRefreshedAt: true },
+        });
+        if (
+          current?.lastRefreshedAt &&
+          current.lastRefreshedAt.getTime() >= requestedAt.getTime()
+        ) {
+          return { ok: true, expiresAt: current.expiresAt };
+        }
+        return { ok: false, message: "فقدت العملية مزلاج تجديد الرمز." };
       }
     } else {
       await prisma.aeToken.create({ data: { id: ROW_ID, ...nextData } });
@@ -197,14 +314,36 @@ async function doRefresh(): Promise<RefreshOutcome> {
 
     return { ok: true, expiresAt };
   } catch (e) {
+    console.error("[ae-token] فشل تجديد الرمز:", safeErrorKind(e));
+    const upstreamCode =
+      e instanceof AeApiError && /^[A-Za-z0-9_. -]{1,64}$/.test(e.code)
+        ? e.code
+        : null;
     const message =
-      e instanceof AeApiError
-        ? `${e.code}: ${e.operatorMessage}`
-        : e instanceof Error
-          ? e.message
-          : String(e);
-    await recordError(message);
+      upstreamCode === null
+        ? "تعذّر تجديد رمز AliExpress بأمان."
+        : `تعذّر تجديد رمز AliExpress (${upstreamCode}).`;
+    await releaseRefreshLease(leaseId, message);
     return { ok: false, message };
+  }
+}
+
+async function releaseRefreshLease(
+  leaseId: string,
+  errorMessage?: string,
+): Promise<void> {
+  try {
+    const prisma = await db();
+    await prisma.aeToken.updateMany({
+      where: { id: ROW_ID, refreshLeaseId: leaseId },
+      data: {
+        refreshLeaseId: null,
+        refreshLeaseUntil: null,
+        ...(errorMessage ? { lastError: errorMessage.slice(0, 500) } : {}),
+      },
+    });
+  } catch {
+    // انتهاء المهلة يحرر المزلاج حتى لو فشل تنظيفه الفوري.
   }
 }
 
@@ -221,8 +360,10 @@ export async function seedTokenFromEnv(): Promise<boolean> {
     where: { id: ROW_ID },
     create: {
       id: ROW_ID,
-      accessToken: cfg.AE_ACCESS_TOKEN,
-      refreshToken: cfg.AE_REFRESH_TOKEN || null,
+      accessToken: encryptSecret(cfg.AE_ACCESS_TOKEN, "ae-access-token"),
+      refreshToken: cfg.AE_REFRESH_TOKEN
+        ? encryptSecret(cfg.AE_REFRESH_TOKEN, "ae-refresh-token")
+        : null,
       // البيئة لا تحمل تاريخ انتهاء، فنتركه فارغًا: لا تجديد استباقي حتى
       // يعرّفه أول تجديد فعلي، ويبقى التجديد التفاعلي عند خطأ التفويض.
       expiresAt: null,
@@ -230,8 +371,10 @@ export async function seedTokenFromEnv(): Promise<boolean> {
       lastError: null,
     },
     update: {
-      accessToken: cfg.AE_ACCESS_TOKEN,
-      refreshToken: cfg.AE_REFRESH_TOKEN || null,
+      accessToken: encryptSecret(cfg.AE_ACCESS_TOKEN, "ae-access-token"),
+      refreshToken: cfg.AE_REFRESH_TOKEN
+        ? encryptSecret(cfg.AE_REFRESH_TOKEN, "ae-refresh-token")
+        : null,
       lastError: null,
     },
   });
@@ -262,18 +405,6 @@ export async function getTokenState(): Promise<AeTokenState> {
     lastError: row.lastError,
     hasRefreshToken: Boolean(row.refreshToken),
   };
-}
-
-async function recordError(message: string): Promise<void> {
-  try {
-    const prisma = await db();
-    await prisma.aeToken.updateMany({
-      where: { id: ROW_ID },
-      data: { lastError: message.slice(0, 500) },
-    });
-  } catch {
-    // تسجيل سبب الفشل مساعد لا حرج — لا نُسقط التجديد بسببه
-  }
 }
 
 /**

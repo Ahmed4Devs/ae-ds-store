@@ -5,6 +5,7 @@ import { z } from "zod";
 import { isAdmin } from "@/lib/session";
 import { FxRateRangeError, recordFxRate } from "@/lib/fx";
 import { getDictionary } from "@/lib/i18n";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * إجراءات الإعدادات التشغيلية.
@@ -17,9 +18,15 @@ import { getDictionary } from "@/lib/i18n";
 export type AdminSettingsResult = { ok: boolean; message: string };
 
 const fxSchema = z.object({
-  rate: z.number(),
-  source: z.string().trim().min(1).max(60).optional(),
-});
+  rate: z.number().finite(),
+  source: z
+    .string()
+    .trim()
+    .min(1)
+    .max(60)
+    .refine((value) => !/[\u0000-\u001f\u007f]/u.test(value))
+    .optional(),
+}).strict();
 
 export async function setFxRateAction(
   input: z.input<typeof fxSchema>,
@@ -43,7 +50,7 @@ export async function setFxRateAction(
     if (e instanceof FxRateRangeError) {
       return { ok: false, message: t.admin.fxInvalid };
     }
-    console.error("[admin] فشل حفظ سعر الصرف:", e);
+    console.error("[admin] فشل حفظ سعر الصرف:", safeErrorKind(e));
     return { ok: false, message: t.common.unexpectedError };
   }
 

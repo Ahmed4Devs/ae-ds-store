@@ -2,13 +2,15 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { readCart, clearCart } from "@/lib/cart";
 import { shippingAddressSchema } from "@/lib/ksa";
-import { createLocalOrder } from "@/lib/orders";
+import { createLocalOrder, deriveCheckoutSecurity } from "@/lib/orders";
 import { getCurrentUser } from "@/lib/session";
 import { rememberGuestOrder } from "@/lib/guest-orders";
 import { getDictionary, getLocale } from "@/lib/i18n";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * إجراء إتمام الشراء.
@@ -33,15 +35,48 @@ export type CheckoutState = {
   formError?: string;
 };
 
+const checkoutTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+
 export async function checkoutAction(
   _prev: CheckoutState,
   formData: FormData,
 ): Promise<CheckoutState> {
-  const [cart, t, locale] = await Promise.all([
+  const [cart, t, locale, user] = await Promise.all([
     readCart(),
     getDictionary(),
     getLocale(),
+    getCurrentUser(),
   ]);
+
+  const checkoutToken = checkoutTokenSchema.safeParse(
+    formData.get("checkoutToken"),
+  );
+  if (!checkoutToken.success) {
+    return { formError: t.checkout.createFailed };
+  }
+  const checkoutSecurity = deriveCheckoutSecurity(
+    checkoutToken.data,
+    user?.id,
+  );
+
+  // إذا وصل الردّ الأول متأخرًا أو أعاد المتصفح POST نفسه بعد انقطاع، فقد
+  // تكون السلة قد فُرّغت بالفعل. نفحص المفتاح الدائم قبل رفض السلة الفارغة
+  // ونعيد العميل إلى الطلبية نفسها. المطابقة بهوية المالك دفاع إضافي فوق
+  // إدخال الهوية أصلًا في بصمة HMAC.
+  const existingOrder = await prisma.order.findUnique({
+    where: { checkoutKeyHash: checkoutSecurity.checkoutKeyHash },
+    select: { orderNumber: true, userId: true },
+  });
+  if (existingOrder && existingOrder.userId === (user?.id ?? null)) {
+    if (!user) {
+      await rememberGuestOrder(
+        existingOrder.orderNumber,
+        checkoutSecurity.guestAccessToken!,
+      );
+    }
+    await clearCart();
+    redirect(`/pay/${existingOrder.orderNumber}`);
+  }
 
   if (cart.length === 0) {
     return { formError: t.checkout.cartEmpty };
@@ -68,29 +103,17 @@ export async function checkoutAction(
     return { errors };
   }
 
-  const user = await getCurrentUser();
   const address = parsed.data;
   const saveAddress = formData.get("saveAddress") === "on";
-
-  let addressId: string | undefined;
-  if (user && saveAddress) {
-    const saved = await prisma.address.create({
-      data: {
-        userId: user.id,
-        fullName: address.fullName,
-        phone: address.phone,
-        country: address.country,
-        province: address.province,
-        city: address.city,
-        addressLine1: address.addressLine1,
-        addressLine2: address.addressLine2 || null,
-        postalCode: address.postalCode || null,
-        nationalAddr: address.nationalAddress || null,
-      },
-      select: { id: true },
-    });
-    addressId = saved.id;
-  }
+  const notesValue = formData.get("notes");
+  const notes =
+    typeof notesValue === "string"
+      ? notesValue
+          .replace(/[\u0000-\u001f\u007f]/gu, " ")
+          .replace(/\s+/gu, " ")
+          .trim()
+          .slice(0, 300) || undefined
+      : undefined;
 
   // معرّف الطلبية الداخلي لم يعد لازمًا هنا: الدفع والتوريد انتقلا إلى
   // ما بعد هذا الإجراء، وصفحة الدفع تجد الطلبية برقمها الظاهر.
@@ -101,21 +124,24 @@ export async function checkoutAction(
       address,
       locale,
       userId: user?.id,
-      addressId,
-      // حقل حرّ لا يُتحقَّق منه بمخطّط — نحدّ طوله منعًا لتضخّم التخزين
-      notes:
-        (formData.get("notes") as string)?.trim().slice(0, 500) || undefined,
+      saveAddress,
+      ...checkoutSecurity,
+      // حقل حرّ محدود الطول؛ أي File مصطنع لا يُحوَّل إلى نص ضمني.
+      notes,
     });
     orderNumber = created.orderNumber;
   } catch (e) {
+    console.error("[checkout] تعذّر تثبيت الطلبية:", safeErrorKind(e));
     return {
-      formError: e instanceof Error ? e.message : t.checkout.createFailed,
+      // لا نعيد رسالة قاعدة البيانات أو المزوّد للعميل؛ قد تحوي أسماء
+      // جداول وحقول أو تفاصيل تشغيلية تساعد على الاستطلاع.
+      formError: t.checkout.createFailed,
     };
   }
 
   // طلبية الضيف تُربَط بهذا المتصفّح حتى لا يقرأها غيره بمعرفة رقمها فقط
   if (!user) {
-    await rememberGuestOrder(orderNumber);
+    await rememberGuestOrder(orderNumber, checkoutSecurity.guestAccessToken!);
   }
 
   /**

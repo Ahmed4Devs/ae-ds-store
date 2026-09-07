@@ -228,6 +228,7 @@ async function main() {
   const secret = env().TAP_SECRET_KEY;
   const charge = {
     id: "chg_test_1",
+    object: "charge" as const,
     status: "CAPTURED",
     amount: 373.55,
     currency: "SAR",

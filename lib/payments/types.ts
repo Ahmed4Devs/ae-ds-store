@@ -17,6 +17,8 @@ export interface CreateIntentInput {
   orderNumber: string;
   /** المبلغ بالريال كما هو مخزَّن في الطلبية — لا يُعاد حسابه هنا */
   amountSar: number;
+  /** العملة المثبّتة في سجل النيّة، بصيغة ISO-4217 الموحّدة. */
+  currency: string;
   customerEmail?: string;
   customerName?: string;
   /** الصفحة التي يعود إليها العميل بعد الدفع */
@@ -32,6 +34,14 @@ export interface CreateIntentInput {
    * نحرسها بأنفسنا في expireStaleIntents بدل الاعتماد على المزوّد.
    */
   expiresAt: Date;
+  /**
+   * يبيّن هل هذا استئناف لحجز محلي انقطع أثناء طلب الإنشاء.
+   *
+   * Tap يستطيع إعادة POST بأمان لأن reference.idempotent ثابت. أما فواتير
+   * Moyasar فلا تملك given_id؛ عند الغموض لا يجوز لها POST جديد قبل العثور
+   * على الفاتورة السابقة بالـ metadata.
+   */
+  recovery: "none" | "safe-retry" | "reconcile-only";
 }
 
 export interface ProviderIntent {
@@ -39,27 +49,37 @@ export interface ProviderIntent {
   providerRef: string;
   checkoutUrl: string | null;
   status: PaymentStatus;
+  /** إثبات الاستجابة الموثوقة؛ يعاد فحصه قبل كتابة الصف محليًا. */
+  amountSar: number;
+  currency: string;
 }
 
 export interface WebhookEvent {
+  /** يمنع إشعار مزوّد قديم/آخر من تسوية مرجع متصادم في القاعدة. */
+  provider: Exclude<PaymentProviderName, "manual">;
   providerRef: string;
   status: PaymentStatus;
   failureCode?: string;
   failureMessage?: string;
+  /** انعكاس/void بعد نجاح سابق؛ تبقى الحالة المالية وتُلزم مراجعة. */
+  requiresManualReview?: boolean;
   /**
    * المبلغ الذي أُخذ فعلًا لدى المزوّد، بالريال. تُقارنه التسوية بمبلغ
    * النيّة: خصمٌ جزئي أو حمولة معدَّلة لا يجوز أن يُسوّي طلبيةً بكاملها.
-   * يُترك undefined حين لا يحمله الإشعار — والتسوية تتساهل حينها لأن
-   * التوقيع تحقّق من الأصالة أصلًا.
+   * إلزاميان حتى بعد نجاح التوقيع: أصالة الرسالة لا تعني أن العملية تخص
+   * المبلغ والعملة اللذين ثُبّتا في الطلبية.
    */
-  amountSar?: number;
-  currency?: string;
+  amountSar: number;
+  /** عملة المبلغ بعد توحيدها والتحقق منها في طبقة الدفع. */
+  currency: string;
   payload: unknown;
 }
 
 export interface PaymentProvider {
   readonly name: PaymentProviderName;
   create(input: CreateIntentInput): Promise<ProviderIntent>;
+  /** جلب الحالة الموثوقة من API المزوّد للمصالحة عند ضياع webhook. */
+  retrieve(providerRef: string): Promise<WebhookEvent | null>;
   /**
    * يتحقق من صحة الإشعار ويترجمه. يعيد null عند فشل التحقق — والمسار
    * يترجم ذلك إلى 401 دون أي تفصيل، فلا يصير الردّ أوراكلًا يعلّم
@@ -81,11 +101,18 @@ export type PaymentErrorCode =
  */
 export class PaymentError extends Error {
   readonly code: PaymentErrorCode;
+  /** قد يكون المزوّد أنشأ العملية رغم أن الرد لم يصلنا. */
+  readonly ambiguous: boolean;
 
-  constructor(code: PaymentErrorCode, message?: string) {
+  constructor(
+    code: PaymentErrorCode,
+    message?: string,
+    options: { ambiguous?: boolean } = {},
+  ) {
     super(message ?? code);
     this.name = "PaymentError";
     this.code = code;
+    this.ambiguous = options.ambiguous ?? false;
   }
 }
 

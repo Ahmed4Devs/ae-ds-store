@@ -9,6 +9,9 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // افصل دور الترحيل ذي صلاحية DDL عن دور وقت التشغيل محدود الصلاحيات.
+    // في التطوير يمكن إبقاء المتغيّر الإضافي فارغًا واستخدام الرابط نفسه.
+    url:
+      process.env["MIGRATION_DATABASE_URL"] || process.env["DATABASE_URL"],
   },
 });

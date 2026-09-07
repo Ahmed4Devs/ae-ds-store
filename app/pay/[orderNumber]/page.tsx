@@ -8,6 +8,7 @@ import { activeProvider, getLatestIntent } from "@/lib/payments";
 import { formatSar } from "@/lib/pricing";
 import { getCurrentUser } from "@/lib/session";
 import { getDictionary, getLocale } from "@/lib/i18n";
+import { isOrderNumber } from "@/lib/order-number";
 
 export async function generateMetadata() {
   const t = await getDictionary();
@@ -26,6 +27,7 @@ function providerLabel(
 
 export default async function PayPage(props: PageProps<"/pay/[orderNumber]">) {
   const { orderNumber } = await props.params;
+  if (!isOrderNumber(orderNumber)) notFound();
 
   const [user, t, locale] = await Promise.all([
     getCurrentUser(),
@@ -55,7 +57,7 @@ export default async function PayPage(props: PageProps<"/pay/[orderNumber]">) {
   }
 
   const intent = await getLatestIntent(order.id);
-  const provider = activeProvider();
+  const configuredProvider = activeProvider();
   const orderHref = `/orders/${order.orderNumber}`;
 
   // ------------------------------------------------ حالات لا تقبل دفعًا
@@ -117,6 +119,17 @@ export default async function PayPage(props: PageProps<"/pay/[orderNumber]">) {
   const failed = intent?.status === "FAILED";
   const awaiting = intent?.status === "PENDING";
   const canRetry = Boolean(expired || failed);
+  const storedProvider =
+    intent?.provider === "manual" ||
+    intent?.provider === "moyasar" ||
+    intent?.provider === "tap"
+      ? intent.provider
+      : null;
+  // النيّة الحيّة تبقى تابعة لمزوّدها حتى لو غيّر المشغّل الإعداد لاحقًا.
+  // المزوّد الحالي يُستخدم فقط عندما لا توجد محاولة قابلة للاستكمال.
+  const provider = !canRetry && storedProvider
+    ? storedProvider
+    : configuredProvider;
 
   return shell(
     <>

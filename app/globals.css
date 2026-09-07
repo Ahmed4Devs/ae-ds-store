@@ -110,3 +110,78 @@ body {
 [dir="rtl"] .flip-x {
   transform: scaleX(-1);
 }
+
+/* حد الخطأ الجذري لا يستخدم style attributes كي تبقى CSP بلا unsafe-inline. */
+.global-error-body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #fff;
+  color: #0f172a;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+.global-error-main { max-width: 32rem; text-align: center; }
+.global-error-mark {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #059669;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+}
+.global-error-title { margin: 0 0 12px; font-size: 22px; font-weight: 700; }
+.global-error-copy { margin: 0 0 24px; font-size: 15px; line-height: 1.8; color: #475569; }
+.global-error-button {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  border-radius: 8px;
+  background: #059669;
+  color: #fff;
+  padding: 12px 28px;
+  font-size: 15px;
+  font-weight: 500;
+  font-family: inherit;
+}
+.global-error-digest {
+  margin: 24px 0 0;
+  font-size: 12px;
+  color: #64748b;
+  font-variant-numeric: tabular-nums;
+}
+
+/** قواعد الفاتورة محصورة تحت invoice-doc فلا تؤثر في طباعة بقية الصفحات. */
+@media print {
+  @page { margin: 15mm; }
+  html, body { background: #fff !important; color: #000 !important; }
+  body > *:not(main) { display: none !important; }
+  .no-print { display: none !important; }
+  main { padding: 0 !important; }
+  .invoice-doc, .invoice-doc * {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+  .invoice-doc .inv-sheet {
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    max-width: none !important;
+  }
+  .invoice-doc .inv-rule,
+  .invoice-doc .inv-table th,
+  .invoice-doc .inv-table td,
+  .invoice-doc .inv-box { border-color: #9a9a9a !important; }
+  .invoice-doc .inv-note { color: #444 !important; }
+  .invoice-doc .inv-table tr,
+  .invoice-doc .inv-totals,
+  .invoice-doc .inv-qr { page-break-inside: avoid; }
+}

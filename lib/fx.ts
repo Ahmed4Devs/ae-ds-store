@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * سعر صرف الدولار مقابل الريال — مصدر الحقيقة لمسارات الطلب.
@@ -60,7 +61,10 @@ export const currentFxRate = cache(async (): Promise<number> => {
     const rate = Number(row.rate);
     return Number.isFinite(rate) && rate > 0 ? rate : fallback;
   } catch (e) {
-    console.error("[fx] تعذّرت قراءة سعر الصرف من قاعدة البيانات:", e);
+    console.error(
+      "[fx] تعذّرت قراءة سعر الصرف من قاعدة البيانات:",
+      safeErrorKind(e),
+    );
     return fallback;
   }
 });
@@ -109,7 +113,10 @@ export async function fxHistory(
     }));
   } catch (e) {
     // السجلّ عرض إضافي — غيابه لا يبرّر إسقاط صفحة الإعدادات
-    console.error("[fx] تعذّرت قراءة سجلّ أسعار الصرف:", e);
+    console.error(
+      "[fx] تعذّرت قراءة سجلّ أسعار الصرف:",
+      safeErrorKind(e),
+    );
     return [];
   }
 }

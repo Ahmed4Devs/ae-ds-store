@@ -1,27 +1,41 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { ResetPasswordForm } from "@/components/reset-password-form";
 import { Alert, Card } from "@/components/ui";
 import { getDictionary } from "@/lib/i18n";
+import {
+  RESET_TOKEN_COOKIE,
+  isResetToken,
+} from "@/lib/reset-password-security";
 
 export async function generateMetadata() {
   const t = await getDictionary();
-  return { title: t.auth.resetTitle };
+  return {
+    title: t.auth.resetTitle,
+    robots: { index: false, follow: false },
+    referrer: "no-referrer" as const,
+  };
 }
 
 export default async function ResetPasswordPage(
   props: PageProps<"/reset-password">,
 ) {
-  const [sp, t] = await Promise.all([props.searchParams, getDictionary()]);
+  const [sp, t, cookieStore] = await Promise.all([
+    props.searchParams,
+    getDictionary(),
+    cookies(),
+  ]);
 
-  const token = typeof sp.token === "string" ? sp.token : "";
   /**
-   * تعيد better-auth المستخدم إلى هنا بأحد شكلين: `?token=…` عند صحّة
-   * الرمز، أو `?error=INVALID_TOKEN` عند انتهائه أو استهلاكه — فنتعامل
-   * مع الحالتين، ومع غياب المُعاملين معًا (من فتح الصفحة مباشرةً).
+   * proxy يحوّل ?token إلى كوكي HttpOnly ثم يعيد التوجيه إلى URL نظيف.
+   * وجود token هنا يعني أن الطلب تجاوز proxy؛ نفشل مغلقًا ولا نمرره إلى RSC.
    */
-  const rejected = typeof sp.error === "string" && sp.error !== "";
-  const usable = token !== "" && !rejected;
+  const rejected =
+    sp.token !== undefined ||
+    (typeof sp.error === "string" && sp.error !== "");
+  const usable =
+    !rejected && isResetToken(cookieStore.get(RESET_TOKEN_COOKIE)?.value);
 
   return (
     <>
@@ -36,7 +50,7 @@ export default async function ResetPasswordPage(
           </p>
 
           {usable ? (
-            <ResetPasswordForm token={token} labels={t.auth} />
+            <ResetPasswordForm labels={t.auth} />
           ) : (
             <div className="space-y-4">
               <Alert tone="warning">{t.auth.resetInvalidBody}</Alert>

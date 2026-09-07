@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { prisma } from "@/lib/db";
 import { redact } from "@/lib/aliexpress/client";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * تنظيف لمرّة واحدة: يعيد حجب requestSummary في سجلّات AeApiLog القديمة
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
 }
 
 main().catch(async (e) => {
-  console.error("فشل التنظيف:", e instanceof Error ? e.message : e);
+  console.error("فشل التنظيف:", safeErrorKind(e));
   await prisma.$disconnect();
   process.exit(1);
 });

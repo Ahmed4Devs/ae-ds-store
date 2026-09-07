@@ -10,12 +10,13 @@ import { getCurrentUser } from "@/lib/session";
 import { ownsGuestOrder } from "@/lib/guest-orders";
 import { syncOrderIfStale } from "@/lib/order-sync";
 import { formatSar } from "@/lib/pricing";
-import { formatDateAr, formatSaudiPhone } from "@/lib/ksa";
-import type { ShippingAddress } from "@/lib/ksa";
+import { formatDateAr, formatSaudiPhone, shippingAddressSchema } from "@/lib/ksa";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
 import { getQueryClient } from "@/lib/query/client";
 import { queryKeys } from "@/lib/query/keys";
-import type { OrderTrackingDto, TrackingNodeDto } from "@/lib/query/keys";
+import type { OrderTrackingDto } from "@/lib/query/keys";
+import { isOrderNumber } from "@/lib/order-number";
+import { serializeTrackingNodes } from "@/lib/tracking";
 
 export async function generateMetadata() {
   const t = await getDictionary();
@@ -26,7 +27,13 @@ export default async function OrderDetailPage(
   props: PageProps<"/orders/[orderNumber]">,
 ) {
   const { orderNumber } = await props.params;
+  if (!isOrderNumber(orderNumber)) notFound();
   const sp = await props.searchParams;
+  if (
+    Object.keys(sp).some((key) => key !== "new") ||
+    Array.isArray(sp.new) ||
+    (sp.new !== undefined && sp.new !== "1")
+  ) notFound();
   const isNew = sp.new === "1";
 
   const [user, t, locale] = await Promise.all([
@@ -50,6 +57,9 @@ export default async function OrderDetailPage(
   } else if (!(await ownsGuestOrder(orderNumber))) {
     notFound();
   }
+
+  const parsedAddress = shippingAddressSchema.safeParse(order.shippingSnapshot);
+  if (!parsedAddress.success) notFound();
 
   // استقصاء أولي إن مضى الفاصل الأدنى، ثم يتولّى العميل التحديث الدوري
   await syncOrderIfStale(order.id);
@@ -85,11 +95,7 @@ export default async function OrderDetailPage(
         cpName: p.cpName,
         cpWebsiteUrl: p.cpWebsiteUrl,
         etaAt: p.etaAt?.toISOString() ?? null,
-        nodes: ((p.nodes as unknown as TrackingNodeDto[]) ?? []).map((n) => ({
-          title: n.title,
-          description: n.description,
-          at: typeof n.at === "string" ? n.at : new Date(n.at).toISOString(),
-        })),
+        nodes: serializeTrackingNodes(p.nodes),
       })),
     ),
     updatedAt: new Date().toISOString(),
@@ -99,7 +105,7 @@ export default async function OrderDetailPage(
   const queryClient = getQueryClient();
   queryClient.setQueryData(queryKeys.orderTracking(orderNumber), initialTracking);
 
-  const addr = order.shippingSnapshot as unknown as ShippingAddress;
+  const addr = parsedAddress.data;
 
   // الحالة المعتمدة للعرض هي ما بعد المزامنة لا لقطة ما قبلها
   const status = fresh?.status ?? order.status;
@@ -196,6 +202,7 @@ export default async function OrderDetailPage(
                     <img
                       src={it.imageSnapshot}
                       alt=""
+                      referrerPolicy="no-referrer"
                       className="size-full object-cover"
                     />
                   )}

@@ -15,6 +15,16 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const { searchParams } = new URL(request.url);
+  const keys = [...searchParams.keys()];
+  if (
+    keys.some((key) => key !== "status") ||
+    searchParams.getAll("status").length > 1
+  ) {
+    return NextResponse.json(
+      { error: "INVALID_PARAMS" },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const statusParam = searchParams.get("status");
 
   const VALID = [
@@ -28,6 +38,12 @@ export async function GET(request: Request): Promise<NextResponse> {
     "CANCELLED",
   ] as const;
   type Status = (typeof VALID)[number];
+  if (statusParam !== null && !(VALID as readonly string[]).includes(statusParam)) {
+    return NextResponse.json(
+      { error: "INVALID_PARAMS" },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
+  }
   const status =
     statusParam && (VALID as readonly string[]).includes(statusParam)
       ? (statusParam as Status)

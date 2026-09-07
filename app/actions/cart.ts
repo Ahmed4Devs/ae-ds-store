@@ -4,9 +4,12 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
   addToCart,
+  CartLimitError,
+  cartItemSchema,
   clearCart,
   updateCartQuantity,
 } from "@/lib/cart";
+import { getDictionary } from "@/lib/i18n";
 
 /**
  * إجراءات السلة.
@@ -16,12 +19,7 @@ import {
  * ولا يُفترض أن المتصفّح هو المصدر.
  */
 
-const addSchema = z.object({
-  aeProductId: z.string().min(1),
-  skuAttr: z.string().min(1, "التنويعة مطلوبة"),
-  quantity: z.number().int().min(1).max(20),
-  logisticsServiceName: z.string().min(1, "طريقة الشحن مطلوبة"),
-});
+const addSchema = cartItemSchema;
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -30,18 +28,24 @@ export async function addToCartAction(
 ): Promise<ActionResult> {
   const parsed = addSchema.safeParse(input);
   if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "بيانات غير صالحة" };
+    return { ok: false, error: (await getDictionary()).common.unexpectedError };
   }
 
-  await addToCart(parsed.data);
+  try {
+    await addToCart(parsed.data);
+  } catch (error) {
+    const t = await getDictionary();
+    if (error instanceof CartLimitError) {
+      return { ok: false, error: t.cart.limitReached };
+    }
+    // لا تمرّر خطأ الكوكي/التوقيع أو إطار الخادم إلى المتصفح.
+    return { ok: false, error: t.common.unexpectedError };
+  }
   revalidatePath("/cart");
   return { ok: true };
 }
 
-const updateSchema = z.object({
-  aeProductId: z.string().min(1),
-  skuAttr: z.string().min(1),
-  logisticsServiceName: z.string().min(1),
+const updateSchema = cartItemSchema.extend({
   quantity: z.number().int().min(0).max(20),
 });
 

@@ -2,14 +2,15 @@
 
 import { useEffect } from "react";
 import { DEFAULT_LOCALE, dictionaries, fill } from "@/lib/i18n/shared";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * حدّ الخطأ الجذري — يحلّ محلّ app/layout.tsx نفسه حين يفشل التخطيط.
  *
  * لأنه يستبدل التخطيط فهو مسؤول عن <html> و<body> بنفسه، ولا يضمن أن
- * ورقة globals.css أو خط Tajawal قد حُمّلا (فشل التخطيط قد يكون سببه هما).
- * لذلك كل التنسيق مضمّن بقيم صريحة بدل أصناف Tailwind أو متغيّرات CSS:
- * صفحة بلا تنسيق أفضل من صفحة تعتمد على ما انكسر للتوّ.
+ * لا نستخدم style attributes هنا: سياسة CSP تمنع الأنماط السطرية حتى لا
+ * تتحول أي نقطة حقن HTML مستقبلية إلى حقن CSS. الأصناف ذات قيم fallback
+ * صريحة في globals.css وتبقى الصفحة مفهومة حتى إن تعذّر تحميل الورقة.
  *
  * واللغة عربية ثابتة للسبب نفسه في app/error.tsx: كوكي اللغة غير مقروء
  * من مكوّن عميل.
@@ -22,81 +23,41 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[app/global-error] root layout failure:", error);
+    console.error(
+      "[app/global-error] root layout failure:",
+      safeErrorKind(error),
+      error.digest ?? "NO_DIGEST",
+    );
   }, [error]);
 
   const t = dictionaries[DEFAULT_LOCALE];
 
   return (
     <html lang="ar" dir="rtl">
-      <body
-        style={{
-          margin: 0,
-          minHeight: "100vh",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "24px",
-          background: "#ffffff",
-          color: "#0f172a",
-          fontFamily: "'Segoe UI', system-ui, sans-serif",
-        }}
-      >
-        <main style={{ maxWidth: "32rem", textAlign: "center" }}>
-          <div
-            style={{
-              width: "48px",
-              height: "48px",
-              margin: "0 auto 20px",
-              display: "grid",
-              placeItems: "center",
-              borderRadius: "12px",
-              background: "#059669",
-              color: "#ffffff",
-              fontSize: "22px",
-              fontWeight: 700,
-            }}
-            aria-hidden="true"
-          >
+      <body className="global-error-body">
+        <main className="global-error-main">
+          <div className="global-error-mark" aria-hidden="true">
             و
           </div>
 
-          <h1 style={{ margin: "0 0 12px", fontSize: "22px", fontWeight: 700 }}>
+          <h1 className="global-error-title">
             {t.errorPage.globalTitle}
           </h1>
 
-          <p style={{ margin: "0 0 24px", fontSize: "15px", lineHeight: 1.8, color: "#475569" }}>
+          <p className="global-error-copy">
             {t.errorPage.globalBody}
           </p>
 
           <button
             type="button"
             onClick={reset}
-            style={{
-              appearance: "none",
-              border: "none",
-              cursor: "pointer",
-              borderRadius: "8px",
-              background: "#059669",
-              color: "#ffffff",
-              padding: "12px 28px",
-              fontSize: "15px",
-              fontWeight: 500,
-              fontFamily: "inherit",
-            }}
+            className="global-error-button"
           >
             {t.errorPage.reload}
           </button>
 
           {error.digest && (
-            <p
-              style={{
-                margin: "24px 0 0",
-                fontSize: "12px",
-                color: "#64748b",
-                fontVariantNumeric: "tabular-nums",
-              }}
-            >
+            <p className="global-error-digest">
               {fill(t.errorPage.digest, { id: error.digest })}
             </p>
           )}

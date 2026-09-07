@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { deliveryEstimateAr } from "@/lib/ksa";
 import type { Cart } from "@/lib/cart";
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n/shared";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /** رسائل مشكلات الأسطر — تُعرض للعميل مباشرةً فتلزم ترجمتها. */
 const ISSUES = {
@@ -228,7 +229,10 @@ async function productMargins(cart: Cart): Promise<Map<string, number>> {
       rows.map((r) => [r.aeProductId, Number(r.marginPercent)]),
     );
   } catch (e) {
-    console.error("[cart] تعذّرت قراءة هوامش المنتجات — سيُستخدم الافتراضي:", e);
+    console.error(
+      "[cart] تعذّرت قراءة هوامش المنتجات — سيُستخدم الافتراضي:",
+      safeErrorKind(e),
+    );
     return new Map();
   }
 }

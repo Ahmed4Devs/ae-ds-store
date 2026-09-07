@@ -25,7 +25,14 @@ export const manualProvider: PaymentProvider = {
       // لا صفحة دفع خارجية — التعليمات تُعرض في متجرنا
       checkoutUrl: null,
       status: "REQUIRES_ACTION",
+      amountSar: input.amountSar,
+      currency: input.currency,
     };
+  },
+
+  async retrieve(): Promise<WebhookEvent | null> {
+    // التحويل البنكي لا يملك API خارجية؛ الدليل هو مراجعة المسؤول للحوالة.
+    return null;
   },
 
   /**

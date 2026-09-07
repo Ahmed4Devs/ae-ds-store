@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { after } from "next/server";
 import { env } from "@/lib/env";
 import { formatSar } from "@/lib/pricing";
 import {
@@ -11,6 +12,39 @@ import {
   type Locale,
 } from "@/lib/i18n/shared";
 import { deliver, type MailMessage } from "@/lib/mail/providers";
+import { safeErrorKind } from "@/lib/safe-log";
+
+/**
+ * يربط النقل بعمر طلب Next عبر after/waitUntil. إطلاق Promise عارية قد
+ * يقطعه الخادم serverless بعد إرسال الاستجابة وقبل وصول البريد.
+ */
+async function scheduleAuthMail(
+  message: MailMessage,
+  kind: string,
+): Promise<void> {
+  const send = async () => {
+    try {
+      await deliver(message);
+    } catch (error) {
+      // لا نطبع كائن المزوّد؛ قد يحمل عنوان المستلم أو محتوى الرسالة.
+      console.error(
+        `[mail] ${kind} delivery failed`,
+        safeErrorKind(error),
+      );
+    }
+  };
+
+  try {
+    after(send);
+  } catch {
+    // Better Auth can also be called from jobs, scripts, and integration tests
+    // where there is no Next request/prerender context. In that case `after`
+    // throws synchronously; awaiting delivery is the only lifecycle-safe path.
+    // Delivery failures remain normalized inside `send` so callers cannot use
+    // provider timing/errors as an account-existence oracle.
+    await send();
+  }
+}
 
 /**
  * قوالب البريد ورسائل الطلبيات.
@@ -188,20 +222,21 @@ export async function sendPasswordResetMail(opts: {
       ctaUrl: opts.url,
       footNote: t.mail.ignoreNote,
     });
-    // ⚠️ لا ننتظر النقل عمدًا. better-auth ينتظر هذه الدالة قبل الردّ،
-    // وانتظار جولة الشبكة يجعل زمن ردّ ‎/request-password-reset‎ أطول لبريد
-    // مسجّل (تُرسَل له رسالة) منه لغير مسجّل — وهو عرّاف توقيتٍ يكشف وجود
-    // الحساب رغم أن نصّ الردّ واحد. الرمي مبتلَع أيضًا للسبب نفسه.
-    void deliver({
-      to: opts.to,
-      subject: fill(t.mail.resetSubject, { store: t.meta.siteName }),
-      html,
-      text,
-    }).catch((error) => {
-      console.error("[mail] password reset delivery failed", error);
-    });
+    // يُجدول بعد الرد لمنع عرّاف توقيت كشف الحساب، مع إبقاء serverless حيًا.
+    await scheduleAuthMail(
+      {
+        to: opts.to,
+        subject: fill(t.mail.resetSubject, { store: t.meta.siteName }),
+        html,
+        text,
+      },
+      "password reset",
+    );
   } catch (error) {
-    console.error("[mail] password reset render failed", error);
+    console.error(
+      "[mail] password reset render failed",
+      safeErrorKind(error),
+    );
   }
 }
 
@@ -222,17 +257,21 @@ export async function sendEmailVerificationMail(opts: {
       ctaUrl: opts.url,
       footNote: t.mail.ignoreNote,
     });
-    // لا ننتظر النقل — كسابقتها، درءًا لعرّاف التوقيت على مسار المصادقة.
-    void deliver({
-      to: opts.to,
-      subject: fill(t.mail.verifySubject, { store: t.meta.siteName }),
-      html,
-      text,
-    }).catch((error) => {
-      console.error("[mail] verification delivery failed", error);
-    });
+    // كسابقتها: after يمنع فرق التوقيت ولا يفقد المهمة في serverless.
+    await scheduleAuthMail(
+      {
+        to: opts.to,
+        subject: fill(t.mail.verifySubject, { store: t.meta.siteName }),
+        html,
+        text,
+      },
+      "verification",
+    );
   } catch (error) {
-    console.error("[mail] verification render failed", error);
+    console.error(
+      "[mail] verification render failed",
+      safeErrorKind(error),
+    );
   }
 }
 
@@ -300,7 +339,10 @@ export async function sendOrderPlacedMail(orderId: string): Promise<void> {
     await deliver({ to: order.user.email, subject, html, text });
   } catch (error) {
     // انقطاع البريد يجب ألا يُفشل طلبية دُفعت بالفعل
-    console.error("[mail] order placed delivery failed", error);
+    console.error(
+      "[mail] order placed delivery failed",
+      safeErrorKind(error),
+    );
   }
 }
 
@@ -329,7 +371,10 @@ export async function sendOrderShippedMail(orderId: string): Promise<void> {
 
     await deliver({ to: order.user.email, subject, html, text });
   } catch (error) {
-    console.error("[mail] order shipped delivery failed", error);
+    console.error(
+      "[mail] order shipped delivery failed",
+      safeErrorKind(error),
+    );
   }
 }
 
@@ -358,7 +403,10 @@ export async function sendOrderCancelledMail(orderId: string): Promise<void> {
 
     await deliver({ to: order.user.email, subject, html, text });
   } catch (error) {
-    console.error("[mail] order cancelled delivery failed", error);
+    console.error(
+      "[mail] order cancelled delivery failed",
+      safeErrorKind(error),
+    );
   }
 }
 

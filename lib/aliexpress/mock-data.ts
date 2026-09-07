@@ -153,7 +153,10 @@ function placeholderImage(key: string, label: string): string {
   };
   const [bg, fg] = palette[key] ?? ["#1e293b", "#94a3b8"];
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${bg}"/><stop offset="100%" stop-color="${fg}"/></linearGradient></defs><rect width="600" height="600" fill="url(#g)"/><circle cx="300" cy="250" r="110" fill="rgba(255,255,255,.14)"/><text x="300" y="470" font-family="system-ui,sans-serif" font-size="34" fill="rgba(255,255,255,.92)" text-anchor="middle">${label}</text></svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  // image_urls في استجابة AliExpress سلسلة مفصولة بفواصل منقوطة. وضع
+  // `;utf8` داخل كل data URL يجعل محلّل الواجهة يقسم الصورة نفسها نصفين.
+  // ترميز SVG نسبيًا لا يحتاج هذا الوسيط؛ الصيغة ذات الفاصلة وحدها صحيحة.
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
 type Seed = (typeof CATALOG_SEED)[number];

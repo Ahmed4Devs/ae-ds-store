@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { formatSar } from "@/lib/pricing";
+import { formatSar } from "@/lib/pricing/format";
 import type { CatalogCard } from "@/lib/catalog";
 import type { Locale } from "@/lib/i18n/shared";
 
@@ -27,6 +27,7 @@ export function ProductCard({
           src={product.imageUrl}
           alt={product.title}
           loading="lazy"
+          referrerPolicy="no-referrer"
           className="size-full object-cover transition duration-300 group-hover:scale-105"
         />
         {hasDiscount && (

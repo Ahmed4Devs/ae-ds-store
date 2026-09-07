@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { AeApiError, getOrderDetail, getTracking } from "@/lib/aliexpress";
 import { cancelOrder } from "@/lib/order-cancel";
 import { dictionaries, DEFAULT_LOCALE } from "@/lib/i18n/shared";
+import type { OrderStatus } from "@/lib/generated/prisma/client";
 
 /**
  * مزامنة حالة الطلبيات والتتبع.
@@ -21,12 +22,32 @@ const SHIPPED_LOGISTICS = new Set([
   "BUYER_ACCEPT_GOODS",
 ]);
 
+const SOURCED_AE_STATUSES = new Set([
+  "PLACE_ORDER_SUCCESS",
+  "PLACE_ORDER_PENDING",
+  "WAIT_BUYER_PAY",
+  "WAIT_SELLER_SEND_GOODS",
+  "WAIT_SELLER_EXAMINE_MONEY",
+  "RISK_CONTROL",
+  "RISK_CONTROL_HOLD",
+]);
+
+export type MappedAeStatus =
+  | "SOURCED"
+  | "SHIPPED"
+  | "DELIVERED"
+  | "CANCELLED"
+  | "TRANSITIONING"
+  | "UNKNOWN";
+
 /** تعيين حالة AliExpress إلى حالة متجرنا. */
-function mapStatus(
+export function mapAeStatus(
   aeStatus: string | null,
   logisticsStatus: string | null,
-): "SOURCED" | "SHIPPED" | "DELIVERED" | "CANCELLED" | null {
-  if (!aeStatus) return null;
+): MappedAeStatus {
+  // الصفوف الجديدة لم تُستقصَ بعد؛ نعاملها كمرحلة التوريد الدنيا عند جمع
+  // حالة الطلب المقسّم، لا كحالة مزوّد مجهولة تستوجب إنذارًا.
+  if (!aeStatus) return "SOURCED";
 
   /**
    * ⚠️ `FINISH` تعني «أُغلقت» لا «سُلّمت».
@@ -39,11 +60,33 @@ function mapStatus(
    * التمييز بدليل الشحن: إن لم تغادر الشحنة قط فالإغلاق إلغاء لا تسليم.
    */
   if (aeStatus === "FINISH") {
-    return logisticsStatus && SHIPPED_LOGISTICS.has(logisticsStatus)
-      ? "DELIVERED"
-      : "CANCELLED";
+    if (logisticsStatus === "BUYER_ACCEPT_GOODS") return "DELIVERED";
+    // مغادرة الشحنة لا تثبت استلام العميل. قد تُغلق FINISH بعد نزاع أو
+    // استرداد وهي في الطريق، لذلك لا نعلن DELIVERED بلا دليل قبول صريح.
+    if (logisticsStatus && SHIPPED_LOGISTICS.has(logisticsStatus)) {
+      return "UNKNOWN";
+    }
+    return "CANCELLED";
   }
 
+  // حالة مالية/إلغائية صريحة تتغلب على آخر إشارة لوجستية محفوظة؛ فقد تكون
+  // الشحنة تحركت ثم بدأ نزاع أو استرداد، فلا نعلن تقدّمًا نهائيًا.
+  if (aeStatus === "IN_CANCEL" || aeStatus === "FUND_PROCESSING") {
+    return "TRANSITIONING";
+  }
+
+  const knownProgressStatus =
+    aeStatus === "WAIT_BUYER_ACCEPT_GOODS" ||
+    aeStatus === "BUYER_ACCEPT_GOODS" ||
+    SOURCED_AE_STATUSES.has(aeStatus);
+  if (!knownProgressStatus) return "UNKNOWN";
+
+  if (
+    aeStatus === "BUYER_ACCEPT_GOODS" ||
+    logisticsStatus === "BUYER_ACCEPT_GOODS"
+  ) {
+    return "DELIVERED";
+  }
   if (aeStatus === "WAIT_BUYER_ACCEPT_GOODS") return "SHIPPED";
   if (
     logisticsStatus === "SELLER_SEND_GOODS" ||
@@ -51,9 +94,94 @@ function mapStatus(
   ) {
     return "SHIPPED";
   }
-  if (aeStatus === "BUYER_ACCEPT_GOODS") return "DELIVERED";
-  if (aeStatus === "IN_CANCEL" || aeStatus === "FUND_PROCESSING") return null;
   return "SOURCED";
+}
+
+type ParentProgress = "SOURCED" | "SHIPPED" | "DELIVERED";
+
+const PROGRESS_RANK: Record<ParentProgress, number> = {
+  SOURCED: 1,
+  SHIPPED: 2,
+  DELIVERED: 3,
+};
+
+function mayAdvanceOrder(current: string, next: ParentProgress): boolean {
+  if (current === "CANCELLED" || current === "DELIVERED") return false;
+  if (current === "SOURCED" || current === "SHIPPED") {
+    return PROGRESS_RANK[next] > PROGRESS_RANK[current];
+  }
+  return ["PENDING_PAYMENT", "PAID", "SOURCING", "SOURCING_FAILED"].includes(
+    current,
+  );
+}
+
+export interface AeChildSyncState {
+  aeOrderStatus: string | null;
+  aeLogisticsStatus: string | null;
+}
+
+export type ParentSyncDecision =
+  | { action: "ADVANCE"; status: ParentProgress }
+  | { action: "CANCEL" }
+  | { action: "REVIEW" }
+  | { action: "HOLD" };
+
+/**
+ * يجمع حالات أطفال split order إلى قرار واحد محافظ للأب.
+ *
+ * هذه دالة نقية عمدًا: السياسة المالية/اللوجستية الحساسة قابلة لاختبار
+ * جميع تراكيبها دون الحاجة إلى تزوير ردود المزوّد أو لمس قاعدة البيانات.
+ */
+export function deriveParentSyncDecision(input: {
+  currentStatus: OrderStatus;
+  needsManualReview: boolean;
+  children: readonly AeChildSyncState[];
+}): ParentSyncDecision {
+  if (input.children.length === 0) return { action: "REVIEW" };
+  if (input.currentStatus === "CANCELLED" || input.needsManualReview) {
+    return { action: "HOLD" };
+  }
+
+  const states = input.children.map((child) =>
+    mapAeStatus(child.aeOrderStatus, child.aeLogisticsStatus),
+  );
+
+  // أي قيمة جديدة، أو إلغاء/استرداد لا يزال قيد التنفيذ، تحتاج مطابقة
+  // بشرية. تخمين حالة نهائية هنا قد يوحي بتسليم أو استرداد لم يحدث.
+  if (states.includes("UNKNOWN") || states.includes("TRANSITIONING")) {
+    return { action: "REVIEW" };
+  }
+
+  const cancelledChildren = states.filter(
+    (state) => state === "CANCELLED",
+  ).length;
+  if (cancelledChildren > 0) {
+    if (input.currentStatus === "DELIVERED") return { action: "REVIEW" };
+    return cancelledChildren === states.length
+      ? { action: "CANCEL" }
+      : { action: "REVIEW" };
+  }
+
+  const progress: ParentProgress = states.every(
+    (state) => state === "DELIVERED",
+  )
+    ? "DELIVERED"
+    : states.some(
+          (state) => state === "SHIPPED" || state === "DELIVERED",
+        )
+      ? "SHIPPED"
+      : "SOURCED";
+
+  // الدفع المحلي هو صاحب الحقيقة قبل التوريد؛ كما لا نسمح بتراجع حالة
+  // لوجستية ثبتت سابقًا بسبب طفل لم يُستقصَ بعد أو رد قديم من المزوّد.
+  if (
+    input.currentStatus === "PENDING_PAYMENT" ||
+    !mayAdvanceOrder(input.currentStatus, progress)
+  ) {
+    return { action: "HOLD" };
+  }
+
+  return { action: "ADVANCE", status: progress };
 }
 
 export interface SyncResult {
@@ -64,9 +192,27 @@ export interface SyncResult {
 
 /** يزامن طلبية واحدة من طلبيات AliExpress. */
 export async function syncAeOrder(aeOrderRowId: string): Promise<boolean> {
+  // حجز ذري قبل أي اتصال خارجي. لو وصلت صفحة العميل والـ cron معًا، يفوز
+  // واحد فقط؛ البقية ترى lastPolledAt حديثًا ولا تضرب حصة AliExpress.
+  const cutoff = new Date(Date.now() - MIN_POLL_INTERVAL_MS);
+  const claimedAt = new Date();
+  const claimed = await prisma.aeOrder.updateMany({
+    where: {
+      id: aeOrderRowId,
+      OR: [{ lastPolledAt: null }, { lastPolledAt: { lt: cutoff } }],
+      order: { status: { not: "CANCELLED" } },
+    },
+    data: { lastPolledAt: claimedAt },
+  });
+  if (claimed.count === 0) return false;
+
   const row = await prisma.aeOrder.findUnique({
     where: { id: aeOrderRowId },
-    include: { order: { select: { id: true, status: true } } },
+    include: {
+      order: {
+        select: { id: true, status: true, needsManualReview: true },
+      },
+    },
   });
   if (!row) return false;
 
@@ -88,61 +234,96 @@ export async function syncAeOrder(aeOrderRowId: string): Promise<boolean> {
   // --- حالة الطلبية ---
   try {
     const detail = await getOrderDetail(row.aeOrderId);
-    await prisma.aeOrder.update({
-      where: { id: row.id },
-      data: {
-        aeOrderStatus: detail.orderStatus,
-        aeLogisticsStatus: detail.logisticsStatus,
-        payTimeoutSecond: detail.payTimeoutSecond,
-        amountBreakdown: detail.amountBreakdown as object,
-        lastPolledAt: new Date(),
-      },
+    let shouldCancel = false;
+    let cancelForExpiredPayWindow = false;
+
+    const aggregateChanged = await prisma.$transaction(async (tx) => {
+      // استقصاء طفلين قد ينتهي في اللحظة نفسها؛ قفل الأب يجعل الجمع يرى
+      // لقطة متسقة ويمنع آخر طفل من طمس نتيجة الأول.
+      await tx.$queryRaw<Array<{ locked: string }>>`
+        SELECT "id"::text AS "locked"
+        FROM "Order"
+        WHERE "id" = ${row.order.id}
+        FOR UPDATE
+      `;
+
+      const current = await tx.order.findUnique({
+        where: { id: row.order.id },
+        select: { status: true, needsManualReview: true },
+      });
+      if (!current || current.status === "CANCELLED") return false;
+
+      await tx.aeOrder.update({
+        where: { id: row.id },
+        data: {
+          aeOrderStatus: detail.orderStatus,
+          aeLogisticsStatus: detail.logisticsStatus,
+          payTimeoutSecond: detail.payTimeoutSecond,
+          amountBreakdown: detail.amountBreakdown as object,
+          lastPolledAt: claimedAt,
+        },
+      });
+
+      const children = await tx.aeOrder.findMany({
+        where: { orderId: row.order.id },
+        select: { aeOrderStatus: true, aeLogisticsStatus: true },
+      });
+
+      const decision = deriveParentSyncDecision({
+        currentStatus: current.status,
+        needsManualReview: current.needsManualReview,
+        children,
+      });
+
+      if (decision.action === "REVIEW") {
+        await tx.order.update({
+          where: { id: row.order.id },
+          data: { needsManualReview: true },
+        });
+        return true;
+      }
+
+      if (decision.action === "CANCEL") {
+        shouldCancel = true;
+        return true;
+      }
+
+      // pay_timeout_second يخص الطفل. لا نلغي الأب إلا عندما تغلق النافذة
+      // محليًا وهو ما يزال أصلًا PENDING_PAYMENT.
+      cancelForExpiredPayWindow =
+        current.status === "PENDING_PAYMENT" &&
+        detail.payTimeoutSecond != null &&
+        detail.payTimeoutSecond <= 0;
+      if (cancelForExpiredPayWindow) {
+        shouldCancel = true;
+        return true;
+      }
+
+      if (decision.action === "HOLD") return true;
+
+      await tx.order.update({
+        where: { id: row.order.id },
+        data: { status: decision.status },
+      });
+      return true;
     });
 
-    const mapped = mapStatus(detail.orderStatus, detail.logisticsStatus);
+    changed ||= aggregateChanged;
 
-    // انتهت مهلة الدفع لدى المنصة ولم تُدفع لدينا أصلًا. الحقل
-    // pay_timeout_second هو الثواني **المتبقية**، فالصفر فما دون يعني أن
-    // النافذة أُغلقت: الطلبية لن تُشترى أبدًا وبقاؤها PENDING_PAYMENT
-    // يخدع العميل ويترك نيّة دفعه مفتوحة إلى ما لا نهاية.
-    const payWindowClosed =
-      row.order.status === "PENDING_PAYMENT" &&
-      detail.payTimeoutSecond != null &&
-      detail.payTimeoutSecond <= 0;
-
-    if (mapped === "CANCELLED" || payWindowClosed) {
-      // لا نكتب CANCELLED هنا مباشرةً: المرور بـ cancelOrder هو ما يضمن
-      // إبطال نيّات الدفع وإرسال بريد الإلغاء مهما كان مصدر الإلغاء.
+    if (shouldCancel) {
+      // المرور من نقطة الإلغاء الوحيدة يضمن إبطال النيّات. الطلب المدفوع
+      // لن يُلغى كذبًا بلا refund؛ cancelOrder يرفعه للمراجعة بدل ذلك.
       const cancelled = await cancelOrder(row.order.id, {
         actor: "system",
-        reason: payWindowClosed
-          ? // القاموس يُقرأ باللغة الافتراضية لا من الكوكيز: المزامنة تعمل
-            // في مهمة مجدولة بلا سياق طلب.
-            dictionaries[DEFAULT_LOCALE].admin.autoCancelled
+        reason: cancelForExpiredPayWindow
+          ? dictionaries[DEFAULT_LOCALE].admin.autoCancelled
           : `AliExpress: ${detail.orderStatus ?? "CANCELLED"}`,
       });
-      if (cancelled.ok) changed = true;
-    } else if (
-      mapped &&
-      mapped !== row.order.status &&
-      // الطلبية غير المدفوعة لدينا لا تُرقّى بحالة المنصة: فرع mapStatus
-      // الافتراضي يعيد "SOURCED"، فكانت طلبيةٌ في PENDING_PAYMENT تُرقّى إلى
-      // «قيد التجهيز» فيُهزَم الإلغاء التلقائي عند انتهاء مهلة الدفع. مخارج
-      // PENDING_PAYMENT الوحيدة: نجاح الدفع، أو الإلغاء التلقائي أعلاه.
-      row.order.status !== "PENDING_PAYMENT"
-    ) {
-      await prisma.order.update({
-        where: { id: row.order.id },
-        data: { status: mapped },
-      });
-      changed = true;
+      changed ||= cancelled.ok;
     }
   } catch (e) {
     if (!(e instanceof AeApiError)) throw e;
-    await prisma.aeOrder.update({
-      where: { id: row.id },
-      data: { lastPolledAt: new Date() },
-    });
+    // lastPolledAt حُجزت قبل الاتصال؛ تُعاد المحاولة بعد الفاصل المحدد.
   }
 
   // --- التتبع ---
@@ -183,6 +364,11 @@ export async function syncAeOrder(aeOrderRowId: string): Promise<boolean> {
 /** يزامن الطلبيات النشطة التي مضى على آخر استقصاء لها وقت كافٍ. */
 export async function syncActiveOrders(limit = 25): Promise<SyncResult> {
   const cutoff = new Date(Date.now() - MIN_POLL_INTERVAL_MS);
+  // لا نسمح لقيمة مستدعاة بالخطأ أن تحوّل cron إلى مسح غير محدود للقاعدة
+  // وحصة المزوّد. الصفر يبقى طلبًا مشروعًا لعدم تنفيذ أي استقصاء.
+  const boundedLimit = Number.isFinite(limit)
+    ? Math.min(100, Math.max(0, Math.trunc(limit)))
+    : 25;
 
   const rows = await prisma.aeOrder.findMany({
     where: {
@@ -193,7 +379,7 @@ export async function syncActiveOrders(limit = 25): Promise<SyncResult> {
       OR: [{ lastPolledAt: null }, { lastPolledAt: { lt: cutoff } }],
     },
     orderBy: [{ lastPolledAt: { sort: "asc", nulls: "first" } }],
-    take: limit,
+    take: boundedLimit,
     select: { id: true, aeOrderId: true },
   });
 

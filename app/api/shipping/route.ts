@@ -4,6 +4,7 @@ import { getShippingOptions, AeApiError } from "@/lib/aliexpress";
 import { toSar } from "@/lib/pricing";
 import { effectiveFxRateAsync } from "@/lib/fx";
 import { deliveryEstimateAr } from "@/lib/ksa";
+import { safeErrorKind } from "@/lib/safe-log";
 import { getLocale } from "@/lib/i18n";
 import type { ShippingOptionDto } from "@/lib/query/keys";
 
@@ -16,22 +17,42 @@ import type { ShippingOptionDto } from "@/lib/query/keys";
  */
 
 const querySchema = z.object({
-  productId: z.string().min(1),
-  quantity: z.coerce.number().int().min(1).max(50),
+  productId: z.string().regex(/^\d{5,32}$/),
+  quantity: z
+    .string()
+    .regex(/^\d{1,2}$/)
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(50)),
 });
+
+const NO_STORE = {
+  "Cache-Control": "private, no-store, max-age=0",
+  Vary: "Cookie",
+} as const;
 
 export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
+
+  // ارفض المعاملات المكررة/المجهولة بدل اعتماد «الأول»؛ الوسطاء وذاكرات
+  // التخزين قد يفسرون التكرار بطريقة أخرى، ما يصنع التباسًا في المدخلات.
+  const keys = [...searchParams.keys()];
+  const canonicalQuery =
+    keys.every((key) => key === "productId" || key === "quantity") &&
+    searchParams.getAll("productId").length === 1 &&
+    searchParams.getAll("quantity").length === 1;
 
   const parsed = querySchema.safeParse({
     productId: searchParams.get("productId"),
     quantity: searchParams.get("quantity"),
   });
 
-  if (!parsed.success) {
+  if (!canonicalQuery || !parsed.success) {
     // لا نُفصح عن بنية التحقق الداخلية (مسارات الحقول ورموز zod) — إفشاء
     // معلومات لا حاجة للعميل به؛ رمز مقتضب يكفي.
-    return NextResponse.json({ error: "INVALID_PARAMS" }, { status: 400 });
+    return NextResponse.json(
+      { error: "INVALID_PARAMS" },
+      { status: 400, headers: NO_STORE },
+    );
   }
 
   const locale = await getLocale();
@@ -59,16 +80,23 @@ export async function GET(request: Request): Promise<NextResponse> {
       availableStock: o.availableStock,
     }));
 
-    return NextResponse.json(dto);
+    return NextResponse.json(dto, { headers: NO_STORE });
   } catch (e) {
     if (e instanceof AeApiError) {
-      // أخطاء المدخلات تُعاد بـ 400 حتى لا تعيد المكتبة المحاولة عبثًا
+      // لا نعيد رمز المزوّد أو رسالته؛ كلاهما تفصيل داخلي لا يحتاجه العميل.
       const status = e.errorClass === "INVALID_INPUT" ? 400 : 502;
       return NextResponse.json(
-        { error: e.code, message: e.customerMessage },
-        { status },
+        { error: status === 400 ? "INVALID_PARAMS" : "UPSTREAM_UNAVAILABLE" },
+        { status, headers: NO_STORE },
       );
     }
-    throw e;
+    console.error(
+      "[shipping] unexpected failure",
+      safeErrorKind(e),
+    );
+    return NextResponse.json(
+      { error: "INTERNAL_ERROR" },
+      { status: 500, headers: NO_STORE },
+    );
   }
 }

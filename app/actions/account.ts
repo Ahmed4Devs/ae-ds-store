@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import type { Prisma } from "@/lib/generated/prisma/client";
 import { shippingAddressSchema } from "@/lib/ksa";
 import { getCurrentUser } from "@/lib/session";
 import { getDictionary } from "@/lib/i18n";
@@ -33,7 +34,35 @@ export interface AddressInput {
   nationalAddress?: string;
 }
 
-const idSchema = z.object({ id: z.string().min(1) });
+const idSchema = z
+  .object({ id: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/) })
+  .strict();
+
+function isRetryableTransactionError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return false;
+  }
+  // P2034 = تعارض/تعطّل معاملة؛ P2002 قد يصدر من الفهرس الجزئي للعنوان
+  // الافتراضي إذا وصلت عمليتا إنشاء متزامنتان قبل أن ترى إحداهما الأخرى.
+  return error.code === "P2034" || error.code === "P2002";
+}
+
+async function serializable<T>(
+  operation: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, {
+        isolationLevel: "Serializable",
+        maxWait: 5_000,
+        timeout: 10_000,
+      });
+    } catch (error) {
+      if (attempt === 2 || !isRetryableTransactionError(error)) throw error;
+    }
+  }
+  throw new Error("تعذّر إكمال المعاملة");
+}
 
 /** يحوّل أخطاء zod إلى خريطة حقل → رسالة، أول خطأ لكل حقل. */
 function fieldErrors(error: z.ZodError): Record<string, string> {
@@ -71,14 +100,15 @@ export async function createAddressAction(
 
   // أول عنوان يصبح الافتراضي تلقائيًا، وإلا بقي دفتر العناوين بلا افتراضي
   // فيفتح العميل صفحة الدفع بحقول فارغة رغم أن لديه عنوانًا محفوظًا.
-  const existing = await prisma.address.count({ where: { userId: user.id } });
-
-  await prisma.address.create({
-    data: {
-      userId: user.id,
-      ...toAddressData(parsed.data),
-      isDefault: existing === 0,
-    },
+  await serializable(async (tx) => {
+    const existing = await tx.address.count({ where: { userId: user.id } });
+    await tx.address.create({
+      data: {
+        userId: user.id,
+        ...toAddressData(parsed.data),
+        isDefault: existing === 0,
+      },
+    });
   });
 
   revalidatePath("/account");
@@ -151,16 +181,16 @@ export async function setDefaultAddressAction(
 
   // معاملة واحدة: لو نُفِّذت الخطوتان منفصلتين وفشلت الثانية لبقي المستخدم
   // بلا عنوان افتراضي إطلاقًا.
-  await prisma.$transaction([
-    prisma.address.updateMany({
+  await serializable(async (tx) => {
+    await tx.address.updateMany({
       where: { userId: user.id, id: { not: owned.id } },
       data: { isDefault: false },
-    }),
-    prisma.address.update({
+    });
+    await tx.address.update({
       where: { id: owned.id },
       data: { isDefault: true },
-    }),
-  ]);
+    });
+  });
 
   revalidatePath("/account");
   return { ok: true };

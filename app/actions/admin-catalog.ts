@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { fetchAndMirrorProduct } from "@/lib/catalog";
 import { AeApiError } from "@/lib/aliexpress";
 import { getDictionary } from "@/lib/i18n";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * إجراءات الكتالوج المنسَّق.
@@ -19,20 +20,22 @@ import { getDictionary } from "@/lib/i18n";
 
 export type AdminCatalogResult = { ok: boolean; message: string };
 
+const internalId = z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/);
+
 const publishSchema = z.object({
-  productId: z.string().min(1),
+  productId: internalId,
   published: z.boolean(),
-});
+}).strict();
 
 const marginSchema = z.object({
-  productId: z.string().min(1),
+  productId: internalId,
   /** null يمسح التخصيص فيعود المنتج إلى الهامش الافتراضي */
   marginPercent: z.number().min(0).max(200).nullable(),
-});
+}).strict();
 
 const importSchema = z.object({
-  aeProductId: z.string().trim().min(1).max(64),
-});
+  aeProductId: z.string().trim().regex(/^\d{5,32}$/),
+}).strict();
 
 /** يُعيد تحقّق الصفحات التي يظهر فيها أثر التعديل. */
 function revalidateCatalog(): void {
@@ -124,7 +127,7 @@ export async function importProductAction(
     // رسالة المشغّل لا رسالة العميل: هذه الشاشة إدارية والسبب الفني مفيد هنا
     const detail =
       e instanceof AeApiError ? `: ${e.operatorMessage}` : "";
-    console.error("[admin] فشل استيراد منتج:", e);
+    console.error("[admin] فشل استيراد منتج:", safeErrorKind(e));
     return { ok: false, message: `${t.admin.importFailed}${detail}` };
   }
 

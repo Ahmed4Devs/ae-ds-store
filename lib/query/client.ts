@@ -45,6 +45,11 @@ export function makeQueryClient(): QueryClient {
 
 let browserQueryClient: QueryClient | undefined;
 
+/** يمحو أي بيانات مستخدم مرطّبة قبل إنهاء الجلسة أو تبديل الهوية. */
+export function clearBrowserQueryCache(): void {
+  if (!isServer) browserQueryClient?.clear();
+}
+
 /**
  * عميل الاستعلامات.
  *

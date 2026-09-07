@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { ErrorView } from "@/components/error-view";
 import { DEFAULT_LOCALE, dictionaries, fill } from "@/lib/i18n/shared";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * حدّ الخطأ لصفحات المتجر.
@@ -24,7 +25,11 @@ export default function ErrorBoundary({
   // التسجيل في التأثير لا في جسم المكوّن: جسم المكوّن قد يُنفَّذ مرّتين في
   // وضع التطوير، فيتضاعف السطر في السجلّ بلا سبب.
   useEffect(() => {
-    console.error("[app/error] unhandled render error:", error);
+    console.error(
+      "[app/error] unhandled render error:",
+      safeErrorKind(error),
+      error.digest ?? "NO_DIGEST",
+    );
   }, [error]);
 
   const t = dictionaries[DEFAULT_LOCALE];

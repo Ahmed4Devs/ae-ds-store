@@ -1,9 +1,33 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { z } from "zod";
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { ProductGrid } from "@/components/product-card";
 import { browse } from "@/lib/catalog";
 import { EmptyState, ButtonLink } from "@/components/ui";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
+
+const SORT_VALUES = [
+  "",
+  "orders,desc",
+  "min_price,asc",
+  "min_price,desc",
+] as const;
+
+const searchParamsSchema = z.object({
+  q: z
+    .string()
+    .max(120)
+    .refine((value) => !/[\u0000-\u001f\u007f]/.test(value))
+    .transform((value) => value.trim().replace(/\s+/g, " ")),
+  category: z.string().regex(/^\d{1,32}$/).optional(),
+  sort: z.enum(SORT_VALUES),
+  page: z
+    .string()
+    .regex(/^[1-9]\d{0,2}$/)
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(100)),
+});
 
 export async function generateMetadata() {
   const t = await getDictionary();
@@ -12,10 +36,27 @@ export async function generateMetadata() {
 
 export default async function SearchPage(props: PageProps<"/search">) {
   const sp = await props.searchParams;
-  const keyword = typeof sp.q === "string" ? sp.q : "";
-  const category = typeof sp.category === "string" ? sp.category : undefined;
-  const sort = typeof sp.sort === "string" ? sp.sort : "";
-  const page = Number(typeof sp.page === "string" ? sp.page : "1") || 1;
+  const allowedKeys = new Set(["q", "category", "sort", "page"]);
+  if (
+    Object.keys(sp).some((key) => !allowedKeys.has(key)) ||
+    [sp.q, sp.category, sp.sort, sp.page].some(Array.isArray)
+  ) {
+    notFound();
+  }
+
+  const parsed = searchParamsSchema.safeParse({
+    q: typeof sp.q === "string" ? sp.q : "",
+    category:
+      typeof sp.category === "string" && sp.category !== ""
+        ? sp.category
+        : undefined,
+    sort: typeof sp.sort === "string" ? sp.sort : "",
+    page: typeof sp.page === "string" ? sp.page : "1",
+  });
+  // المدخل المشوّه لا يصل AliExpress ولا يتحول إلى استعلام مكلف غير محدود.
+  if (!parsed.success) notFound();
+
+  const { q: keyword, category, sort, page } = parsed.data;
 
   const [result, t, locale] = await Promise.all([
     browse({
@@ -23,7 +64,7 @@ export default async function SearchPage(props: PageProps<"/search">) {
       categoryId: category,
       page,
       pageSize: 24,
-      sortBy: (sort || undefined) as never,
+      sortBy: sort || undefined,
     }),
     getDictionary(),
     getLocale(),

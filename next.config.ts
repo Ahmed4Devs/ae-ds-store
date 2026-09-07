@@ -1,93 +1,72 @@
 import type { NextConfig } from "next";
 
 /**
- * سياسة أمان المحتوى.
- *
- * تسمح بالصور من مصادر https (صور منتجات AliExpress) والأنماط المضمّنة
- * (Tailwind وسكربت المظهر المضمّن في <head>). script-src يقبل 'unsafe-inline'
- * لأن سكربت المظهر يُحقن مضمّنًا؛ التحسين اللاحق استبداله بـ nonce.
- * frame-ancestors 'none' يمنع تضمين الصفحة في إطار (حماية من النقر المخفي).
+ * CSP الديناميكية ذات nonce تُنشأ في proxy.ts كي يمنح Next nonce لسكربتاته.
+ * الترويسات الثابتة هنا لا تحمل أسرارًا ولا تتغير بين الطلبات.
  */
-
-/**
- * أصول بوابات الدفع.
- *
- * سبب وجودها هنا: السياسة أعلاه `default-src 'self'` بلا `frame-src`، فأي
- * بوابة دفع مستضافة تُحجب في المتصفّح **بصمت** — لا رسالة خطأ في الخادم ولا
- * في سجلّ التطبيق، فقط إطار فارغ أو طلب لا يصل. هذا أكثر أعطال الدمج
- * إرباكًا، فنفتح الأصل المطلوب صراحةً حسب المزوّد المضبوط لا لكل المزوّدين.
- *
- * تُقرأ القيمة من process.env مباشرةً لا من lib/env.ts: هذا الملف يُقيَّم في
- * سياق البناء قبل تهيئة وحدة البيئة، واستيرادها هنا يُفشل البناء.
- */
-const PAYMENT_ORIGINS: Record<string, readonly string[]> = {
-  manual: [],
-  moyasar: ["https://api.moyasar.com", "https://cdn.moyasar.com"],
-  tap: ["https://api.tap.company", "https://secure.gosell.io"],
-};
-
-/**
- * أصول **كل** المزوّدين مجتمعةً لا المضبوط وحده.
- *
- * هذا الملف يُقيَّم وقت `next build`، فتُخبز قيمة PAYMENT_PROVIDER الحينية
- * في ترويسات الإنتاج. لو بنينا الصورة بمزوّد ثم غيّرناه في بيئة التشغيل
- * (وهو ما يقبله env.ts) لَحجب المتصفّح البوابة الجديدة بصمت — نفس عطل
- * الحجب الصامت الذي عولج أصلًا. توسيع القائمة إلى كل المزوّدين يزيل
- * الاعتماد على وقت البناء؛ وكلّها بوابات موثوقة فالتوسعة مأمونة.
- */
-const paymentOrigins = Array.from(
-  new Set(Object.values(PAYMENT_ORIGINS).flat()),
-);
-const extra = paymentOrigins.length > 0 ? ` ${paymentOrigins.join(" ")}` : "";
-
-/**
- * `'unsafe-eval'` في التطوير وحده.
- *
- * React مع Turbopack يستعمل eval() في وضع التطوير لميزات التنقيح (إعادة
- * بناء مسار الاستدعاءات، والتحديث الساخن)، فبدونها يظهر خطأ Console متكرّر.
- * الإنتاج يبقى صارمًا بلا eval — React لا يستعملها هناك إطلاقًا — فلا نفتح
- * ثغرة تنفيذ ديناميكي في المتجر المنشور.
- */
-const devEval =
-  process.env.NODE_ENV !== "production" ? " 'unsafe-eval'" : "";
-
-const CSP = [
-  "default-src 'self'",
-  "img-src 'self' https: data:",
-  "style-src 'self' 'unsafe-inline'",
-  `script-src 'self' 'unsafe-inline'${devEval}${extra}`,
-  "font-src 'self' https: data:",
-  `connect-src 'self'${extra}`,
-  // صفحة الدفع المستضافة تُفتح في إطار أو بتحويل كامل حسب المزوّد
-  `frame-src 'self'${extra}`,
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  // form-action يشمل المزوّد لأن بعض البوابات تستقبل الدفع بإرسال نموذج
-  `form-action 'self'${extra}`,
-  "object-src 'none'",
-].join("; ");
-
 const SECURITY_HEADERS = [
-  { key: "Content-Security-Policy", value: CSP },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  {
-    key: "Strict-Transport-Security",
-    value: "max-age=63072000; includeSubDomains; preload",
-  },
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
+  { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+  { key: "Origin-Agent-Cluster", value: "?1" },
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=()",
+    value:
+      "accelerometer=(), autoplay=(), browsing-topics=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(self), usb=()",
   },
+  ...(process.env.NODE_ENV === "production"
+    ? [
+        {
+          key: "Strict-Transport-Security",
+          value: "max-age=63072000; includeSubDomains; preload",
+        },
+      ]
+    : []),
+];
+
+const NO_STORE_HEADERS = [
+  { key: "Cache-Control", value: "private, no-store, max-age=0" },
+  { key: "Pragma", value: "no-cache" },
 ];
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
-  // لا نفصح عن إطار العمل في ترويسة X-Powered-By
   poweredByHeader: false,
+  experimental: {
+    // أعلى قليلًا من أكبر حد تطبيقي (512KB) كي يقرأ proxy البايت الزائد
+    // ويرفض الطلب chunked؛ إن تساويا فقد يمر جسم مبتور بالحجم الحدّي.
+    proxyClientMaxBodySize: "520kb",
+    serverActions: {
+      // لا توجد عمليات رفع ملفات؛ 256KB تشمل هامش multipart للنماذج النصية.
+      bodySizeLimit: "256kb",
+    },
+    // سلامة حزم JS وقت البناء مع بقاء التوليد الساكن ممكنًا مستقبلًا.
+    sri: { algorithm: "sha256" },
+  },
   async headers() {
-    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+    return [
+      { source: "/:path*", headers: SECURITY_HEADERS },
+      // كل API في المشروع ديناميكي أو مرتبط بمستخدم/مزوّد خارجي.
+      { source: "/api/:path*", headers: NO_STORE_HEADERS },
+      {
+        source: "/reset-password",
+        headers: [
+          ...NO_STORE_HEADERS,
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
+        ],
+      },
+      {
+        source: "/two-factor",
+        headers: [
+          ...NO_STORE_HEADERS,
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
+        ],
+      },
+    ];
   },
 };
 

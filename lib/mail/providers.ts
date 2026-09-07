@@ -30,6 +30,26 @@ function fromAddress(): string {
 
 /** مهلة نقل البريد بالمللي ثانية — مزوّد بطيء يجب ألّا يعلّق مسار المصادقة. */
 const MAIL_TIMEOUT_MS = 10_000;
+const MAX_MAIL_BODY_BYTES = 512 * 1024;
+
+function validateMessage(msg: MailMessage): void {
+  if (
+    !msg.to ||
+    msg.to.length > 320 ||
+    /[\r\n]/.test(msg.to) ||
+    !msg.subject ||
+    msg.subject.length > 200 ||
+    /[\r\n]/.test(msg.subject)
+  ) {
+    throw new TypeError("Unsafe mail envelope");
+  }
+  if (
+    Buffer.byteLength(msg.html, "utf8") > MAX_MAIL_BODY_BYTES ||
+    Buffer.byteLength(msg.text, "utf8") > MAX_MAIL_BODY_BYTES
+  ) {
+    throw new RangeError("Mail body is too large");
+  }
+}
 
 /**
  * مزوّد التطوير: يطبع الرسالة في الطرفية.
@@ -40,6 +60,10 @@ const MAIL_TIMEOUT_MS = 10_000;
  * الوحيدة هنا.
  */
 function sendViaConsole(msg: MailMessage): void {
+  // Integration tests use synthetic inboxes and must not print one-time auth
+  // tokens into CI logs. Interactive development keeps the full message below.
+  if (process.env.NODE_ENV === "test") return;
+
   const urls = msg.text.match(/https?:\/\/\S+/g) ?? [];
   const lines = [
     "──────────────────────────────────────────────",
@@ -73,14 +97,25 @@ async function sendViaSmtp(msg: MailMessage): Promise<void> {
     connectionTimeout: MAIL_TIMEOUT_MS,
     greetingTimeout: MAIL_TIMEOUT_MS,
     socketTimeout: MAIL_TIMEOUT_MS,
+    // smtp:// في الإنتاج يجب أن ينجح في STARTTLS أو يفشل مغلقًا؛ smtps://
+    // يبدأ مشفّرًا أصلًا. بيئة التطوير وحدها قد تستخدم MailHog بلا TLS.
+    requireTLS: process.env.NODE_ENV === "production",
+    tls: {
+      minVersion: "TLSv1.2",
+      rejectUnauthorized: true,
+    },
   });
-  await transport.sendMail({
-    from: fromAddress(),
-    to: msg.to,
-    subject: msg.subject,
-    html: msg.html,
-    text: msg.text,
-  });
+  try {
+    await transport.sendMail({
+      from: fromAddress(),
+      to: msg.to,
+      subject: msg.subject,
+      html: msg.html,
+      text: msg.text,
+    });
+  } finally {
+    transport.close();
+  }
 }
 
 /**
@@ -104,18 +139,23 @@ async function sendViaResend(msg: MailMessage): Promise<void> {
     // مهلة صريحة: انقطاع Resend (يقبل الاتصال ثم يتجمّد) كان يعلّق كل تسجيل
     // واستعادة دقائق، لأن better-auth ينتظر إتمام هذه الدالة قبل الردّ.
     signal: AbortSignal.timeout(MAIL_TIMEOUT_MS),
+    redirect: "error",
   });
 
   if (!res.ok) {
-    // نص الرد يحمل سبب الرفض (نطاق غير موثّق، مفتاح منتهٍ…) — بدونه
-    // يصبح تشخيص فشل الإرسال في الإنتاج تخمينًا
-    const body = await res.text().catch(() => "");
-    throw new Error(`Resend rejected the message (${res.status}): ${body}`);
+    // لا نضمّن جسم المزوّد في الخطأ؛ قد يعكس بيانات الرسالة إلى السجل.
+    await res.body?.cancel().catch(() => undefined);
+    throw new Error(`Resend rejected the message (${res.status})`);
   }
+
+  // The response body is not used. Cancel it on success as well so a provider
+  // cannot keep a socket/stream alive longer than the authentication task.
+  await res.body?.cancel().catch(() => undefined);
 }
 
 /** ينقل الرسالة عبر المزوّد المضبوط في البيئة. قد يرمي — والمناداة تتكفّل. */
 export async function deliver(msg: MailMessage): Promise<void> {
+  validateMessage(msg);
   switch (env().MAIL_PROVIDER) {
     case "smtp":
       await sendViaSmtp(msg);

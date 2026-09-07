@@ -147,6 +147,7 @@ export const ar = {
     checkout: "متابعة الشراء",
     fixIssues: "عالج التنبيهات أولًا",
     shippingSuffix: "شحن",
+    limitReached: "بلغت السلة الحد الأقصى لعدد المنتجات. احذف منتجًا قبل إضافة آخر.",
   },
 
   checkout: {
@@ -301,6 +302,19 @@ export const ar = {
     emailNotVerified:
       "لم يُؤكَّد بريدك بعد. افتح رابط التأكيد المرسل إليك أو اطلب إرساله من جديد.",
     resetFailed: "تعذّر إرسال الرابط. حاول مرة أخرى.",
+    twoFactorTitle: "التحقق بخطوتين",
+    twoFactorSubtitle:
+      "أدخل الرمز الحالي من تطبيق المصادقة لإكمال تسجيل الدخول.",
+    authenticatorCode: "رمز تطبيق المصادقة",
+    authenticatorCodeHint: "ستة أرقام تتغير كل 30 ثانية",
+    recoveryCode: "رمز الاسترداد",
+    useRecoveryCode: "استخدام رمز استرداد",
+    useAuthenticatorCode: "استخدام تطبيق المصادقة",
+    verifyTwoFactor: "تحقق وادخل",
+    invalidTwoFactor: "الرمز غير صحيح أو انتهت مهلة المحاولة. حاول مرة أخرى.",
+    lockedTwoFactor:
+      "أُوقف التحقق مؤقتًا بعد محاولات متكررة. انتظر 30 دقيقة ثم سجّل الدخول من جديد.",
+    backToLogin: "العودة إلى تسجيل الدخول",
   },
 
   account: {
@@ -343,6 +357,30 @@ export const ar = {
     defaultBadge: "الافتراضي",
     addressInUse:
       "هذا العنوان مرتبط بطلبيات سابقة. سيُحذف من قائمتك وتبقى الطلبيات محتفظة بلقطتها.",
+    twoFactorTitle: "حماية لوحة الإدارة بالتحقق بخطوتين",
+    twoFactorRequiredTitle: "يلزم تفعيل MFA قبل دخول الإدارة",
+    twoFactorRequiredBody:
+      "صلاحية ADMIN مقفلة حتى تسجّل تطبيق مصادقة وتحفظ رموز الاسترداد وتثبت أول رمز.",
+    twoFactorEnabled: "التحقق بخطوتين مفعّل لهذه الهوية.",
+    twoFactorSessionPending:
+      "الإعداد مفعّل، لكن هذه الجلسة لم تمر بالعامل الثاني. سجّل الخروج ثم ادخل مجددًا.",
+    twoFactorIntro:
+      "استخدم تطبيقًا مثل 1Password أو Google Authenticator. لا يحفظ المتجر المفتاح أو الرموز في تخزين المتصفح الدائم.",
+    twoFactorPassword: "كلمة المرور الحالية",
+    twoFactorStart: "بدء إعداد تطبيق المصادقة",
+    twoFactorScan:
+      "امسح رمز QR في تطبيق المصادقة، ثم احفظ رموز الاسترداد قبل تأكيد الإعداد.",
+    twoFactorManualKey: "مفتاح الإدخال اليدوي",
+    twoFactorRecoveryTitle: "رموز الاسترداد — تظهر الآن فقط",
+    twoFactorRecoveryBody:
+      "احفظها في مدير كلمات مرور آمن. كل رمز صالح لمرة واحدة، وتوليد مجموعة جديدة يبطل القديمة.",
+    twoFactorSavedConfirm: "حفظت رموز الاسترداد في مكان آمن",
+    twoFactorCode: "الرمز الحالي ذو الستة أرقام",
+    twoFactorVerify: "تأكيد وتفعيل MFA",
+    twoFactorComplete: "تم تفعيل MFA وتوثيق هذه الجلسة للإدارة.",
+    twoFactorFailed: "تعذّر إكمال العملية. تحقق من كلمة المرور أو الرمز وحاول مجددًا.",
+    twoFactorRegenerate: "توليد رموز استرداد جديدة",
+    twoFactorRegenerated: "أُبطلت الرموز القديمة. احفظ المجموعة الجديدة الآن.",
   },
 
   footer: {
@@ -872,6 +910,7 @@ export const en: Dictionary = {
     checkout: "Proceed to checkout",
     fixIssues: "Resolve the warnings first",
     shippingSuffix: "shipping",
+    limitReached: "Your cart has reached its item limit. Remove an item before adding another.",
   },
 
   checkout: {
@@ -1027,6 +1066,19 @@ export const en: Dictionary = {
     emailNotVerified:
       "Your email is not confirmed yet. Open the confirmation link we sent, or request a new one.",
     resetFailed: "Could not send the link. Please try again.",
+    twoFactorTitle: "Two-step verification",
+    twoFactorSubtitle:
+      "Enter the current code from your authenticator app to finish signing in.",
+    authenticatorCode: "Authenticator code",
+    authenticatorCodeHint: "Six digits that change every 30 seconds",
+    recoveryCode: "Recovery code",
+    useRecoveryCode: "Use a recovery code",
+    useAuthenticatorCode: "Use authenticator app",
+    verifyTwoFactor: "Verify and sign in",
+    invalidTwoFactor: "The code is invalid or the attempt expired. Please try again.",
+    lockedTwoFactor:
+      "Verification is temporarily locked after repeated attempts. Wait 30 minutes, then sign in again.",
+    backToLogin: "Back to sign in",
   },
 
   account: {
@@ -1069,6 +1121,30 @@ export const en: Dictionary = {
     defaultBadge: "Default",
     addressInUse:
       "This address is linked to past orders. It will be removed from your list while those orders keep their snapshot.",
+    twoFactorTitle: "Protect admin access with two-step verification",
+    twoFactorRequiredTitle: "MFA is required for admin access",
+    twoFactorRequiredBody:
+      "The ADMIN role stays locked until you enroll an authenticator, save the recovery codes, and verify the first code.",
+    twoFactorEnabled: "Two-step verification is enabled for this identity.",
+    twoFactorSessionPending:
+      "Setup is enabled, but this session has not passed the second factor. Sign out and sign in again.",
+    twoFactorIntro:
+      "Use an app such as 1Password or Google Authenticator. The store does not persist keys or codes in browser storage.",
+    twoFactorPassword: "Current password",
+    twoFactorStart: "Set up an authenticator app",
+    twoFactorScan:
+      "Scan the QR code in your authenticator, then save the recovery codes before confirming setup.",
+    twoFactorManualKey: "Manual setup key",
+    twoFactorRecoveryTitle: "Recovery codes — shown only now",
+    twoFactorRecoveryBody:
+      "Save them in a secure password manager. Each code works once, and generating a new set invalidates the old one.",
+    twoFactorSavedConfirm: "I saved the recovery codes securely",
+    twoFactorCode: "Current six-digit code",
+    twoFactorVerify: "Confirm and enable MFA",
+    twoFactorComplete: "MFA is enabled and this session is verified for admin access.",
+    twoFactorFailed: "The operation could not be completed. Check the password or code and try again.",
+    twoFactorRegenerate: "Generate new recovery codes",
+    twoFactorRegenerated: "The old codes are invalid. Save this new set now.",
   },
 
   footer: {

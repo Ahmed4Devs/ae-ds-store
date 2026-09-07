@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { cache } from "react";
+import { hasAdminAssurance } from "@/lib/admin-access";
 import { auth } from "@/lib/auth";
 
 /**
@@ -21,11 +22,17 @@ export async function getCurrentUser() {
   return session?.user ?? null;
 }
 
-/** هل المستخدم الحالي مسؤول؟ */
-export async function isAdmin(): Promise<boolean> {
-  const user = await getCurrentUser();
-  return (user as { role?: string } | null)?.role === "ADMIN";
-}
+/**
+ * هل الجلسة الحالية تملك صلاحية الإدارة كاملةً؟
+ *
+ * الدور وحده لا يكفي: يلزم بريد مؤكّد، وإعداد TOTP موثّق في قاعدة البيانات،
+ * وطابع على **الجلسة الحالية** يثبت أنها أُنشئت بعد تحدّي العامل الثاني.
+ * بذلك لا تكتسب الجلسات القديمة المسروقة صلاحية الإدارة عند تفعيل MFA لاحقًا.
+ */
+export const isAdmin = cache(async (): Promise<boolean> => {
+  const session = await getSession();
+  return hasAdminAssurance(session);
+});
 
 /**
  * حارس صفحات الإدارة — يُستدعى في مطلع **كل** صفحة تحت app/admin.

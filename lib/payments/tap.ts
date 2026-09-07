@@ -1,8 +1,17 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac } from "node:crypto";
+import { z } from "zod";
 import { env } from "@/lib/env";
 import type { PaymentStatus } from "@/lib/generated/prisma/enums";
 import {
+  fetchPaymentProvider,
+  normalizeCurrency,
+  readProviderJson,
+  sameAmountAtTwoDecimals,
+  validateCheckoutUrl,
+} from "./security";
+import {
   PaymentError,
+  secretMatches,
   type CreateIntentInput,
   type PaymentProvider,
   type ProviderIntent,
@@ -19,58 +28,185 @@ import {
 
 const API = "https://api.tap.company/v2";
 
+const TAP_CHARGE_ID = /^chg_[A-Za-z0-9_-]{3,140}$/u;
+const TAP_REFUND_ID = /^re_[A-Za-z0-9_-]{3,140}$/u;
+const tapStatusSchema = z.enum([
+  "INITIATED",
+  "PENDING",
+  "IN_PROGRESS",
+  "CAPTURED",
+  "PAID",
+  "DECLINED",
+  "FAILED",
+  "CANCELLED",
+  "VOID",
+  "VOIDED",
+  "ABANDONED",
+  "EXPIRED",
+  "TIMEDOUT",
+  "TIMED_OUT",
+  "REFUNDED",
+  "ACCEPTED",
+  "REJECTED",
+  "RESTRICTED",
+  "UNKNOWN",
+]);
+const tapCurrencySchema = z
+  .string()
+  .regex(/^[A-Za-z]{3}$/u)
+  .transform((value) => value.toUpperCase());
+const tapAmountSchema = z.number().finite().positive().max(1_000_000_000);
+const tapReferenceSchema = z
+  .object({
+    gateway: z.string().max(255).nullish(),
+    payment: z.string().max(255).nullish(),
+  })
+  .nullish();
+const tapResponseSchema = z
+  .object({
+    code: z.string().max(64).nullish(),
+    message: z.string().max(500).nullish(),
+  })
+  .nullish();
+const createdSchema = z.union([
+  z.string().min(1).max(64),
+  z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+]);
+const tapChargeSchema = z.object({
+  id: z.string().regex(TAP_CHARGE_ID),
+  object: z.literal("charge"),
+  status: tapStatusSchema,
+  amount: tapAmountSchema,
+  currency: tapCurrencySchema,
+  reference: tapReferenceSchema,
+  transaction: z.object({
+    url: z.string().max(2_048).nullish(),
+    created: createdSchema.nullish(),
+  }),
+  response: tapResponseSchema,
+});
+const tapRefundSchema = z.object({
+  id: z.string().regex(TAP_REFUND_ID),
+  object: z.literal("refund"),
+  charge_id: z.string().regex(TAP_CHARGE_ID),
+  status: tapStatusSchema,
+  amount: tapAmountSchema,
+  currency: tapCurrencySchema,
+  reference: tapReferenceSchema,
+  created: createdSchema,
+  response: tapResponseSchema,
+});
+const tapWebhookSchema = z.discriminatedUnion("object", [
+  tapChargeSchema,
+  tapRefundSchema,
+]);
+
 export const tapProvider: PaymentProvider = {
   name: "tap",
 
   async create(input: CreateIntentInput): Promise<ProviderIntent> {
-    const res = await fetch(`${API}/charges`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${env().TAP_SECRET_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
+    const config = env();
+    const currency = normalizeCurrency(config.STORE_CURRENCY);
+    if (
+      currency !== "SAR" ||
+      input.currency !== currency ||
+      !sameAmountAtTwoDecimals(input.amountSar, input.amountSar)
+    ) {
+      throw new PaymentError(
+        "PROVIDER_FAILED",
+        "amountSar لا يجوز إرساله إلى Tap بعملة غير SAR أو بدقّة غير صالحة",
+      );
+    }
+
+    const amount = Number(input.amountSar.toFixed(2));
+    const idempotent = `pay_${input.orderId}_${input.attempt}`.slice(0, 120);
+    const returnUrl = requireHttpsUrl(input.returnUrl);
+    const webhookUrl = requireHttpsUrl(
+      new URL("/api/payments/webhook", config.STORE_PUBLIC_URL).toString(),
+    );
+
+    let res: Response;
+    try {
+      res = await fetchPaymentProvider(`${API}/charges`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.TAP_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
         // بالريالات كعدد عشري — لا هللات (راجع التعليق أعلى الملف)
-        amount: Number(input.amountSar.toFixed(2)),
-        currency: env().STORE_CURRENCY,
+        amount,
+        currency,
         description: `طلبية ${input.orderNumber}`,
         // مرجعنا يعود في الإشعار فنطابق به بلا تخمين
-        reference: { order: input.orderNumber },
+        reference: {
+          transaction: idempotent,
+          order: input.orderNumber,
+          // Tap تعيد الاستجابة الأصلية للمفتاح نفسه خلال نافذة الخمول.
+          idempotent,
+        },
+        metadata: {
+          order_id: input.orderId,
+          attempt: String(input.attempt),
+        },
         customer: {
           first_name: input.customerName || "عميل",
           ...(input.customerEmail ? { email: input.customerEmail } : {}),
         },
         source: { id: "src_all" },
-        redirect: { url: input.returnUrl },
-        post: { url: `${env().STORE_PUBLIC_URL}/api/payments/webhook` },
+        redirect: { url: returnUrl },
+        post: { url: webhookUrl },
         // مهلة صفحة الدفع لدى المزوّد نفسها، فلا تبقى فاتورة حيّة قابلة
         // للدفع بعد أن تنتهي نيّتنا محليًّا (يمنع الخصم المزدوج).
         transaction: {
-          expiry: { period: env().PAYMENT_EXPIRY_MINUTES, type: "MINUTE" },
+          expiry: { period: config.PAYMENT_EXPIRY_MINUTES, type: "MINUTE" },
         },
-      }),
-      cache: "no-store",
-    });
+        }),
+        cache: "no-store",
+      });
+    } catch {
+      throw new PaymentError(
+        "PROVIDER_FAILED",
+        "تعذّر الاتصال بـ Tap",
+        { ambiguous: true },
+      );
+    }
 
-    const payload: unknown = await res.json().catch(() => null);
+    let payload: unknown;
+    try {
+      payload = await readProviderJson(res);
+    } catch {
+      throw new PaymentError(
+        "PROVIDER_FAILED",
+        "استجابة Tap غير صالحة",
+        { ambiguous: res.ok },
+      );
+    }
 
     if (!res.ok) {
       throw new PaymentError(
         "PROVIDER_FAILED",
-        `Tap HTTP ${res.status}: ${describe(payload)}`,
+        `رفض Tap طلب إنشاء العملية (${res.status})`,
+        { ambiguous: res.status >= 500 },
       );
     }
 
-    const charge = payload as TapCharge | null;
-    if (!charge?.id) {
-      throw new PaymentError("PROVIDER_FAILED", "استجابة Tap بلا معرّف عملية");
+    const parsed = tapChargeSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw new PaymentError(
+        "PROVIDER_FAILED",
+        "بنية استجابة Tap غير متوقعة",
+        { ambiguous: true },
+      );
     }
 
-    return {
-      providerRef: charge.id,
-      checkoutUrl: charge.transaction?.url ?? null,
-      status: mapStatus(charge.status),
-    };
+    return chargeToIntent(parsed.data, input);
+  },
+
+  async retrieve(providerRef): Promise<WebhookEvent | null> {
+    if (!TAP_CHARGE_ID.test(providerRef)) return null;
+    const charge = await fetchCharge(providerRef);
+    return chargeToEvent(charge, "reconciliation");
   },
 
   async verifyWebhook(req, rawBody): Promise<WebhookEvent | null> {
@@ -83,63 +219,200 @@ export const tapProvider: PaymentProvider = {
      * `hashstring` تُبنى بربط حقول محدَّدة بترتيبها ثم توقيعها بمفتاح Tap
      * السرّي — فنُعيد بناء السلسلة نفسها ونقارن التوقيعين بزمن ثابت.
      */
-    let body: TapCharge | null = null;
-    try {
-      body = JSON.parse(rawBody) as TapCharge;
-    } catch {
-      return null;
-    }
-
-    if (!body?.id) return null;
-
     const presented = req.headers.get("hashstring") ?? "";
-    if (!hashMatches(body, presented)) return null;
-
-    return {
-      providerRef: body.id,
-      status: mapStatus(body.status),
-      failureCode: body.response?.code,
-      failureMessage: body.response?.message,
-      // المبلغ المأخوذ فعلًا — تقارنه التسوية بمبلغ النيّة
-      amountSar: typeof body.amount === "number" ? body.amount : undefined,
-      currency: body.currency,
-      payload: body,
-    };
+    return parseTapWebhook(rawBody, presented, env().TAP_SECRET_KEY);
   },
 };
+
+/** محلّل خالص تستعمله fixtures؛ يتعامل مع charge وrefund بصورتيهما. */
+export function parseTapWebhook(
+  rawBody: string,
+  presentedHash: string,
+  secret: string,
+): WebhookEvent | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(rawBody) as unknown;
+  } catch {
+    return null;
+  }
+
+  const parsed = tapWebhookSchema.safeParse(json);
+  if (!parsed.success || !hashMatches(parsed.data, presentedHash, secret)) {
+    return null;
+  }
+
+  const body = parsed.data;
+  const status =
+    body.object === "refund"
+      ? mapRefundStatus(body.status)
+      : mapChargeStatus(body.status);
+  if (!status) return null;
+
+  if (body.object === "charge") {
+    return chargeToEvent(body, "webhook");
+  }
+
+  return {
+    provider: "tap",
+    // Refund.id يعرّف الاسترداد، لكن سجلّنا مربوط بالعملية الأصلية charge.id.
+    providerRef: body.charge_id,
+    status,
+    failureCode: body.response?.code ?? undefined,
+    failureMessage: body.response?.message ?? undefined,
+    amountSar: body.amount,
+    currency: body.currency,
+    payload: body,
+  };
+}
+
+async function fetchCharge(
+  providerRef: string,
+): Promise<z.infer<typeof tapChargeSchema>> {
+  const config = env();
+  let response: Response;
+  try {
+    response = await fetchPaymentProvider(
+      `${API}/charges/${encodeURIComponent(providerRef)}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${config.TAP_SECRET_KEY}` },
+        cache: "no-store",
+      },
+    );
+  } catch {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "تعذّر التحقق من عملية Tap",
+      { ambiguous: true },
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await readProviderJson(response);
+  } catch {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "ردّ تحقق Tap غير صالح",
+      { ambiguous: true },
+    );
+  }
+  if (!response.ok) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      `تعذّر جلب عملية Tap للتحقق (${response.status})`,
+      { ambiguous: true },
+    );
+  }
+
+  const parsed = tapChargeSchema.safeParse(payload);
+  if (!parsed.success || parsed.data.id !== providerRef) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "بنية عملية Tap الموثوقة غير متوقعة",
+      { ambiguous: true },
+    );
+  }
+  return parsed.data;
+}
+
+function chargeToIntent(
+  charge: z.infer<typeof tapChargeSchema>,
+  input: CreateIntentInput,
+): ProviderIntent {
+  const status = mapChargeStatus(charge.status);
+  const checkoutUrl =
+    charge.transaction.url == null
+      ? null
+      : validateCheckoutUrl("tap", charge.transaction.url);
+  if (
+    !status ||
+    charge.currency !== input.currency ||
+    !sameAmountAtTwoDecimals(charge.amount, input.amountSar) ||
+    (charge.transaction.url != null && !checkoutUrl) ||
+    ((status === "REQUIRES_ACTION" || status === "PENDING") && !checkoutUrl)
+  ) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "رفضت استجابة Tap لاختلاف الحالة أو المبلغ أو العملة أو رابط الدفع",
+      { ambiguous: true },
+    );
+  }
+
+  return {
+    providerRef: charge.id,
+    checkoutUrl,
+    status,
+    amountSar: charge.amount,
+    currency: charge.currency,
+  };
+}
+
+function chargeToEvent(
+  charge: z.infer<typeof tapChargeSchema>,
+  source: "webhook" | "reconciliation",
+): WebhookEvent | null {
+  const unexpectedRefund = charge.status === "REFUNDED";
+  const status = unexpectedRefund ? "FAILED" : mapChargeStatus(charge.status);
+  if (!status) return null;
+  return {
+    provider: "tap",
+    providerRef: charge.id,
+    status,
+    failureCode: charge.response?.code ?? undefined,
+    failureMessage: charge.response?.message ?? undefined,
+    requiresManualReview:
+      unexpectedRefund || charge.status === "VOID" || charge.status === "VOIDED",
+    amountSar: charge.amount,
+    currency: charge.currency,
+    payload: {
+      source,
+      charge: {
+        id: charge.id,
+        status: charge.status,
+        amount: charge.amount,
+        currency: charge.currency,
+        reference: charge.reference,
+        response: charge.response,
+        transaction: { created: charge.transaction.created },
+      },
+    },
+  };
+}
 
 /**
  * يتحقق من توقيع Tap (hashstring) بإعادة بناء السلسلة الموثّقة والمقارنة
  * بزمن ثابت. الترتيب والبادئات (`x_id` … `x_created`) كما ينصّ التوثيق،
  * والمبلغ منسَّق لخانتين عشريتين (دقّة الريال).
  */
-function hashMatches(charge: TapCharge, presented: string): boolean {
-  const secret = env().TAP_SECRET_KEY;
-  if (!secret || !presented) return false;
+function hashMatches(
+  event: z.infer<typeof tapWebhookSchema>,
+  presented: string,
+  secret: string,
+): boolean {
+  if (!secret || !/^[0-9a-f]{64}$/iu.test(presented)) return false;
 
-  const amount =
-    typeof charge.amount === "number" ? charge.amount.toFixed(2) : "";
+  const amount = event.amount.toFixed(currencyFractionDigits(event.currency));
+  const created =
+    event.object === "refund" ? event.created : event.transaction.created;
   const base =
-    `x_id${charge.id ?? ""}` +
+    `x_id${event.id}` +
     `x_amount${amount}` +
-    `x_currency${charge.currency ?? ""}` +
-    `x_gateway_reference${charge.reference?.gateway ?? ""}` +
-    `x_payment_reference${charge.reference?.payment ?? ""}` +
-    `x_status${charge.status ?? ""}` +
-    `x_created${charge.transaction?.created ?? ""}`;
+    `x_currency${event.currency}` +
+    `x_gateway_reference${event.reference?.gateway ?? ""}` +
+    `x_payment_reference${event.reference?.payment ?? ""}` +
+    `x_status${event.status}` +
+    `x_created${created ?? ""}`;
 
   const expected = createHmac("sha256", secret).update(base).digest("hex");
-
-  // حراسة الطول قبل timingSafeEqual: يرمي عند اختلاف الأطوال بدل أن يعيد false
-  const a = Buffer.from(presented);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
+  return secretMatches(presented.toLowerCase(), expected);
 }
 
-/** ترجمة حالات المزوّد إلى حالاتنا. ما لا نعرفه يبقى «قيد التأكيد» لا فاشلًا. */
-function mapStatus(raw: string | undefined): PaymentStatus {
-  switch ((raw ?? "").toUpperCase()) {
+function mapChargeStatus(
+  raw: z.infer<typeof tapStatusSchema>,
+): PaymentStatus | null {
+  switch (raw) {
     case "CAPTURED":
     case "PAID":
       return "PAID";
@@ -147,32 +420,71 @@ function mapStatus(raw: string | undefined): PaymentStatus {
     case "FAILED":
     case "CANCELLED":
     case "VOID":
+    case "VOIDED":
+    case "ABANDONED":
+    case "RESTRICTED":
+    case "UNKNOWN":
       return "FAILED";
     case "EXPIRED":
     case "TIMEDOUT":
+    case "TIMED_OUT":
       return "EXPIRED";
+    case "INITIATED":
+      return "REQUIRES_ACTION";
+    case "PENDING":
+    case "IN_PROGRESS":
+      return "PENDING";
+    // Tap توثّق الاسترداد ككائن refund مستقل يحمل مبلغ الاسترداد الفعلي.
+    // قبول REFUNDED من charge سيقارن مبلغ الخصم الأصلي كأنه مبلغ مسترد.
+    case "REFUNDED":
+      return null;
+    default:
+      return null;
+  }
+}
+
+function mapRefundStatus(
+  raw: z.infer<typeof tapStatusSchema>,
+): PaymentStatus | null {
+  switch (raw) {
     case "REFUNDED":
       return "REFUNDED";
-    default:
+    case "PENDING":
+    case "ACCEPTED":
+    case "IN_PROGRESS":
+    case "INITIATED":
       return "PENDING";
+    case "DECLINED":
+    case "FAILED":
+    case "REJECTED":
+    case "RESTRICTED":
+    case "CANCELLED":
+    case "VOID":
+    case "VOIDED":
+    case "ABANDONED":
+    case "EXPIRED":
+    case "TIMEDOUT":
+    case "TIMED_OUT":
+    case "UNKNOWN":
+      return "FAILED";
+    default:
+      return null;
   }
 }
 
-function describe(payload: unknown): string {
-  if (!payload) return "بلا جسم";
-  try {
-    return JSON.stringify(payload).slice(0, 300);
-  } catch {
-    return "جسم غير قابل للترميز";
-  }
+/** Tap توثّق 3 منازل لهذه العملات، ومنزلتين لبقية عملاتها المدعومة. */
+function currencyFractionDigits(currency: string): number {
+  return ["BHD", "JOD", "KWD", "OMR"].includes(currency) ? 3 : 2;
 }
 
-interface TapCharge {
-  id?: string;
-  status?: string;
-  amount?: number;
-  currency?: string;
-  reference?: { gateway?: string; payment?: string };
-  transaction?: { url?: string; created?: string };
-  response?: { code?: string; message?: string };
+function requireHttpsUrl(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    throw new PaymentError("PROVIDER_FAILED", "عناوين Tap العامة يجب أن تكون HTTPS");
+  }
+  return url.toString();
 }

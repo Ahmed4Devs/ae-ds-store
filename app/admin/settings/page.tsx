@@ -7,6 +7,7 @@ import { currentFxRate, effectiveFxRateAsync, fxHistory } from "@/lib/fx";
 import { getTokenState } from "@/lib/aliexpress/token";
 import { formatDateAr } from "@/lib/ksa";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
+import { safeErrorKind } from "@/lib/safe-log";
 
 export async function generateMetadata() {
   const t = await getDictionary();
@@ -34,7 +35,10 @@ export default async function AdminSettingsPage() {
     effectiveFxRateAsync(),
     fxHistory(10),
     getTokenState().catch((e: unknown) => {
-      console.error("[admin] تعذّرت قراءة حالة تفويض AliExpress:", e);
+      console.error(
+        "[admin] تعذّرت قراءة حالة تفويض AliExpress:",
+        safeErrorKind(e),
+      );
       return null;
     }),
   ]);

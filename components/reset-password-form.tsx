@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { z } from "zod";
-import { authClient } from "@/lib/auth-client";
+import { resetPasswordWithCookie } from "@/app/reset-password/actions";
 import { Alert, Button, Field, Input } from "@/components/ui";
 import type { Dictionary } from "@/lib/i18n/shared";
 
@@ -11,10 +11,8 @@ import type { Dictionary } from "@/lib/i18n/shared";
  * تعيين كلمة مرور جديدة برمز من البريد.
  */
 export function ResetPasswordForm({
-  token,
   labels,
 }: {
-  token: string;
   labels: Dictionary["auth"];
 }) {
   const [pending, startTransition] = useTransition();
@@ -33,8 +31,11 @@ export function ResetPasswordForm({
   const schema = z
     .object({
       // اثنا عشر محرفًا — مطابقًا لـ minPasswordLength على الخادم
-      newPassword: z.string().min(12, labels.passwordPolicy),
-      confirmPassword: z.string(),
+      newPassword: z
+        .string()
+        .min(12, labels.passwordPolicy)
+        .max(128, labels.passwordPolicy),
+      confirmPassword: z.string().max(128, labels.passwordPolicy),
     })
     .refine((v) => v.newPassword === v.confirmPassword, {
       path: ["confirmPassword"],
@@ -64,17 +65,19 @@ export function ResetPasswordForm({
 
     setLocked(true);
     startTransition(async () => {
-      const res = await authClient.resetPassword({
-        newPassword: parsed.data.newPassword,
-        token,
-      });
+      try {
+        const res = await resetPasswordWithCookie(parsed.data.newPassword);
 
-      if (res.error) {
-        setFormError(labels.resetInvalidBody);
-        return;
+        if (res.ok) {
+          setDone(true);
+          return;
+        }
+      } catch {
+        // نفس الرسالة لكل فشل شبكة/رمز؛ لا نكشف تفاصيل المصادقة للواجهة.
       }
 
-      setDone(true);
+      setFormError(labels.resetInvalidBody);
+      setLocked(false);
     });
   }
 
@@ -107,6 +110,7 @@ export function ResetPasswordForm({
           type="password"
           dir="ltr"
           autoComplete="new-password"
+          maxLength={128}
         />
       </Field>
 
@@ -120,6 +124,7 @@ export function ResetPasswordForm({
           type="password"
           dir="ltr"
           autoComplete="new-password"
+          maxLength={128}
         />
       </Field>
 

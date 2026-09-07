@@ -1,7 +1,7 @@
 "use client";
 
 import { Alert, Button, Card } from "@/components/ui";
-import { formatSar } from "@/lib/pricing";
+import { formatSar } from "@/lib/pricing/format";
 import { formatDateAr, formatSaudiPhone } from "@/lib/ksa";
 import type { ShippingAddress } from "@/lib/ksa";
 import { fill, type Dictionary, type Locale } from "@/lib/i18n/shared";
@@ -13,9 +13,8 @@ import { fill, type Dictionary, type Locale } from "@/lib/i18n/shared";
  * يحمل مكوّن الخادم onClick. كل ما يعرضه يصله جاهزًا من الصفحة (أرقام
  * ونصوص) فلا يستدعي قاعدة بيانات ولا يقرأ متغيّرات بيئة.
  *
- * قواعد الطباعة محصورة في وسم <style> داخل المكوّن بدل globals.css: الملف
- * العام يخصّ المتجر كلّه، وإقحام قواعد @media print خاصة بصفحة واحدة فيه
- * يجعلها تسري على كل صفحة يُطبع منها شيء لاحقًا.
+ * قواعد الطباعة محصورة بأصناف invoice-doc داخل globals.css. إبقاؤها خارج
+ * وسم style سطري يسمح لسياسة CSP بمنع الأنماط السطرية بالكامل.
  */
 
 /** بند واحد في الفاتورة — لقطة وقت الطلب لا حالة المنتج اليوم. */
@@ -52,58 +51,6 @@ export interface InvoiceViewProps {
   qrDataUrl: string | null;
 }
 
-/**
- * قواعد الطباعة.
- *
- * إخفاء كل أبناء body عدا <main> يزيل الشريط الإعلاني والترويسة والتذييل
- * دفعةً واحدة، وهو أمتن من تعداد عناصر الهيكل بالاسم لأن أي عنصر جديد
- * يُضاف إلى التخطيط لاحقًا يُستبعد تلقائيًا بدل أن يظهر فجأةً في الورق.
- * والألوان تُقسر على أسود على أبيض لأن الوضع الداكن يطبع صفحة سوداء
- * تلتهم الحبر وتخرج بنصّ باهت.
- */
-const PRINT_CSS = `
-@media print {
-  @page { margin: 15mm; }
-
-  html, body {
-    background: #fff !important;
-    color: #000 !important;
-  }
-
-  body > *:not(main) { display: none !important; }
-  .no-print { display: none !important; }
-
-  main { padding: 0 !important; }
-
-  .invoice-doc, .invoice-doc * {
-    color: #000 !important;
-    background: transparent !important;
-    box-shadow: none !important;
-  }
-
-  .invoice-doc .inv-sheet {
-    border: 0 !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
-    max-width: none !important;
-  }
-
-  .invoice-doc .inv-rule,
-  .invoice-doc .inv-table th,
-  .invoice-doc .inv-table td,
-  .invoice-doc .inv-box {
-    border-color: #9a9a9a !important;
-  }
-
-  .invoice-doc .inv-note { color: #444 !important; }
-
-  /* الجدول لا يُشطر بين ورقتين إن أمكن — بند مقطوع نصفين يربك القارئ */
-  .invoice-doc .inv-table tr { page-break-inside: avoid; }
-  .invoice-doc .inv-totals { page-break-inside: avoid; }
-  .invoice-doc .inv-qr { page-break-inside: avoid; }
-}
-`;
-
 export function InvoiceView({
   locale,
   labels,
@@ -124,8 +71,6 @@ export function InvoiceView({
 }: InvoiceViewProps) {
   return (
     <div className="invoice-doc mx-auto w-full max-w-3xl">
-      <style>{PRINT_CSS}</style>
-
       <div className="no-print mb-5 flex justify-end">
         <Button type="button" variant="outline" size="sm" onClick={() => window.print()}>
           {labels.print}

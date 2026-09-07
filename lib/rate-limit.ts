@@ -1,10 +1,10 @@
 /**
- * محدِّد معدّل بسيط في الذاكرة (نافذة ثابتة).
+ * محدِّد معدّل متزامن خلف واجهة تخزين صغيرة.
  *
- * الغرض: كبح إغراق المسارات والاستغلال التضخيمي وحشو بيانات الاعتماد.
- * يعمل لكل نسخة خادم على حدة، وهو كافٍ لنشر بنسخة واحدة. عند التوسّع
- * الأفقي انقل الحالة إلى مخزن مشترك (Redis) واضبط بروكسي عكسيًّا يمرّر
- * عنوان العميل الحقيقي.
+ * التنفيذ الافتراضي محلي لكل نسخة خادم. الواجهة مقصودة كي يمكن استبداله
+ * لاحقًا بمخزن موزّع من دون تغيير المنادين، لكن هذا الملف لا يجلب شبكة ولا
+ * يعتمد على Redis. حدود التطبيق تظل طبقة امتصاص محلية؛ حدّ Vercel/WAF هو
+ * الطبقة الموزعة عند التوسّع الأفقي.
  */
 
 interface Bucket {
@@ -26,20 +26,103 @@ function sweep(now: number): void {
 }
 
 /**
- * يضمن ألا تتجاوز الخريطة سقفها. ينظّف المنتهية أولًا، وإن بقيت فوق
- * السقف يمسح الخريطة كاملةً (فشل آمن: تصفير الحدود مؤقتًا أهون من نفاد
- * الذاكرة). يُستدعى قبل إنشاء سلّة جديدة.
+ * يضمن ألا تتجاوز الخريطة سقفها. إذا ظلت ممتلئة بعد تنظيف المنتهي نفشل
+ * مفتوحًا للمفتاح الجديد ولا نطرد سلّة قائمة: الإخلاء يجعل تدوير مفاتيح
+ * المهاجم زرًا يمحو حدود زوار آخرين، والبحث الخطي عن ضحية يخلق CPU DoS.
  */
-function ensureCapacity(now: number): void {
-  if (buckets.size < MAX_BUCKETS) return;
-  sweep(now);
-  if (buckets.size >= MAX_BUCKETS) buckets.clear();
+function hasCapacity(now: number): boolean {
+  if (buckets.size < MAX_BUCKETS) return true;
+  // لا نكنس 50 ألف مدخل لكل مفتاح جديد عند الامتلاء؛ مرة في الدقيقة فقط.
+  if (now - lastSweep >= 60_000) sweep(now);
+  return buckets.size < MAX_BUCKETS;
 }
 
 export interface RateResult {
   ok: boolean;
   retryAfter: number; // بالثواني
+  remaining: number;
+  resetAt: number;
 }
+
+/**
+ * عقد التخزين الذي تعتمد عليه طبقة الخنق. التنفيذ الموزع مستقبلًا يستطيع
+ * تطبيق العقد نفسه مع عملية ذرّية واحدة لكل دالة.
+ */
+export interface RateLimitStore {
+  consume(key: string, max: number, windowMs: number, cost?: number): RateResult;
+  current(key: string): number;
+  record(key: string, windowMs: number): void;
+  clear(key: string): void;
+}
+
+class MemoryRateLimitStore implements RateLimitStore {
+  consume(
+    key: string,
+    max: number,
+    windowMs: number,
+    cost = 1,
+  ): RateResult {
+    const now = Date.now();
+    const units = Number.isSafeInteger(cost) && cost > 0 ? cost : 1;
+    if (now - lastSweep >= 60_000) sweep(now);
+
+    const bucket = buckets.get(key);
+    if (!bucket || now >= bucket.resetAt) {
+      const resetAt = now + windowMs;
+      if (!hasCapacity(now)) {
+        return { ok: true, retryAfter: 0, remaining: max, resetAt };
+      }
+      const count = Math.min(max, units);
+      buckets.set(key, { count, resetAt });
+      return {
+        ok: units <= max,
+        retryAfter: units <= max ? 0 : Math.ceil(windowMs / 1000),
+        remaining: Math.max(0, max - count),
+        resetAt,
+      };
+    }
+
+    if (bucket.count + units > max) {
+      return {
+        ok: false,
+        retryAfter: Math.max(1, Math.ceil((bucket.resetAt - now) / 1000)),
+        remaining: 0,
+        resetAt: bucket.resetAt,
+      };
+    }
+
+    bucket.count += units;
+    return {
+      ok: true,
+      retryAfter: 0,
+      remaining: Math.max(0, max - bucket.count),
+      resetAt: bucket.resetAt,
+    };
+  }
+
+  current(key: string): number {
+    const bucket = buckets.get(key);
+    if (!bucket || Date.now() >= bucket.resetAt) return 0;
+    return bucket.count;
+  }
+
+  record(key: string, windowMs: number): void {
+    const now = Date.now();
+    const bucket = buckets.get(key);
+    if (!bucket || now >= bucket.resetAt) {
+      if (!hasCapacity(now)) return;
+      buckets.set(key, { count: 1, resetAt: now + windowMs });
+      return;
+    }
+    bucket.count++;
+  }
+
+  clear(key: string): void {
+    buckets.delete(key);
+  }
+}
+
+const store: RateLimitStore = new MemoryRateLimitStore();
 
 /**
  * حدّ يزيد العدّاد في كل استدعاء — للمحدِّد العام (proxy).
@@ -48,23 +131,9 @@ export function rateLimit(
   key: string,
   max: number,
   windowMs: number,
+  cost = 1,
 ): RateResult {
-  const now = Date.now();
-  if (now - lastSweep >= 60_000) sweep(now);
-
-  const b = buckets.get(key);
-  if (!b || now >= b.resetAt) {
-    ensureCapacity(now);
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return { ok: true, retryAfter: 0 };
-  }
-
-  if (b.count >= max) {
-    return { ok: false, retryAfter: Math.ceil((b.resetAt - now) / 1000) };
-  }
-
-  b.count++;
-  return { ok: true, retryAfter: 0 };
+  return store.consume(key, max, windowMs, cost);
 }
 
 // --- واجهة عدّ الإخفاقات (للمصادقة) ---------------------------------------
@@ -73,24 +142,15 @@ export function rateLimit(
 
 /** العدد الحالي للمفتاح (0 إن لا سلّة أو انتهت نافذتها). */
 export function currentCount(key: string): number {
-  const b = buckets.get(key);
-  if (!b || Date.now() >= b.resetAt) return 0;
-  return b.count;
+  return store.current(key);
 }
 
 /** يسجّل محاولة (يُنشئ السلّة أو يزيد العدّاد) — تُستدعى عند الإخفاق. */
 export function recordHit(key: string, windowMs: number): void {
-  const now = Date.now();
-  const b = buckets.get(key);
-  if (!b || now >= b.resetAt) {
-    ensureCapacity(now);
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return;
-  }
-  b.count++;
+  store.record(key, windowMs);
 }
 
 /** يصفّر عدّاد المفتاح — تُستدعى عند النجاح. */
 export function clearKey(key: string): void {
-  buckets.delete(key);
+  store.clear(key);
 }

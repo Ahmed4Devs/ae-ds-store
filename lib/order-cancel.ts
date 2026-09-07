@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import type { OrderStatus } from "@/lib/generated/prisma/client";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * إلغاء الطلبية.
@@ -15,19 +16,14 @@ export type CancelActor = "customer" | "admin" | "system";
 const MAX_REASON = 500;
 
 /**
- * هل تسمح حالة الطلبية بالإلغاء من طرفنا؟
+ * هل تسمح حالة الطلبية بالإلغاء من طرفنا بلا عملية استرداد؟
  *
- * الحدّ عند SOURCING: ما إن تتجاوز الطلبية هذه النقطة تكون موجودة فعلًا على
- * AliExpress ودُفع ثمنها هناك. تعليمها «ملغاة» لدينا حينئذٍ لا يلغي شيئًا —
- * بل يفصل سجلّنا عن المنصة التي ذهب إليها المال، فنعد العميل باسترداد
- * بينما الشحنة في طريقها إليه. تلك الحالات تُلغى من لوحة المنصة أولًا.
+ * لا توجد في هذا المشروع بعدُ دالة Refund تنفّذ الاسترداد عند المزوّد
+ * وتثبته. لذلك الإلغاء الذاتي محصور بما قبل الدفع؛ PAID وSOURCING_FAILED
+ * تُرفضان مؤقتًا بدل كتابة CANCELLED توحي بأن المال عاد وهو لم يعد.
  */
 export function canCancel(status: OrderStatus): boolean {
-  return (
-    status === "PENDING_PAYMENT" ||
-    status === "PAID" ||
-    status === "SOURCING_FAILED"
-  );
+  return status === "PENDING_PAYMENT";
 }
 
 /** حالات الدفع غير النهائية — هي وحدها ما يُبطَل عند الإلغاء. */
@@ -48,6 +44,14 @@ export async function cancelOrder(
       status: true,
       needsManualReview: true,
       aeOrders: { select: { id: true } },
+      payments: {
+        where: {
+          status: { in: [...OPEN_PAYMENT_STATUSES] },
+          provider: { not: "manual" },
+        },
+        select: { id: true },
+        take: 1,
+      },
     },
   });
 
@@ -55,18 +59,24 @@ export async function cancelOrder(
 
   // فحص مبكر لرسالة واضحة — لكن القرار الفعلي كتابةٌ شرطية أدناه، لأن هذا
   // الفحص قراءةٌ قد يسبقها توريدٌ يبدأ بين القراءة والكتابة.
-  const mirrorsPlatform = opts.actor === "system";
-  if (!mirrorsPlatform) {
-    // وجود صفّ aeOrder أو علَم المراجعة اليدوية دليلٌ قاطع على أن الطلبية
-    // أُنشئت لدى المورّد، فلا تُلغى ذاتيًا مهما بدت الحالة قابلة.
+  const unsafeWithoutRefund =
+    !canCancel(order.status) ||
+    order.aeOrders.length > 0 ||
+    order.payments.length > 0 ||
+    order.needsManualReview;
+  if (unsafeWithoutRefund) {
+    // إلغاء المورّد لطلبية مدفوعة ليس استردادًا لدى بوابة العميل. نرفعها
+    // للمراجعة ولا نمثّلها CANCELLED حتى يضاف workflow استرداد موثّق.
     if (
-      !canCancel(order.status) ||
-      order.aeOrders.length > 0 ||
-      order.needsManualReview
+      opts.actor === "system" &&
+      order.status !== "CANCELLED" &&
+      order.status !== "DELIVERED"
     ) {
-      return { ok: false, reason: "NOT_CANCELLABLE" };
+      await prisma.order.updateMany({
+        where: { id: order.id },
+        data: { needsManualReview: true },
+      });
     }
-  } else if (order.status === "CANCELLED" || order.status === "DELIVERED") {
     return { ok: false, reason: "NOT_CANCELLABLE" };
   }
 
@@ -83,15 +93,20 @@ export async function cancelOrder(
    * بينما الشحنة في طريقها إليه ومالُنا عند المورّد. الشرط في WHERE يجعل
    * الفائز واحدًا: من لا تتحقّق شروطه يخرج بـ NOT_CANCELLABLE.
    */
-  const guard = mirrorsPlatform
-    ? { status: { notIn: ["CANCELLED", "DELIVERED"] as OrderStatus[] } }
-    : {
-        status: {
-          in: ["PENDING_PAYMENT", "PAID", "SOURCING_FAILED"] as OrderStatus[],
-        },
-        aeOrders: { none: {} },
-        needsManualReview: false,
-      };
+  const guard = {
+    status: "PENDING_PAYMENT" as const,
+    aeOrders: { none: {} },
+    // لا نكتب CANCELLED بينما توجد صفحة دفع خارجية حيّة لا نملك بعدُ
+    // workflow لإلغائها/استردادها لدى المزوّد. الحارس داخل الكتابة نفسها
+    // يغلق سباق إنشاء النيّة مع ضغط «إلغاء» في تبويب آخر.
+    payments: {
+      none: {
+        status: { in: [...OPEN_PAYMENT_STATUSES] },
+        provider: { not: "manual" },
+      },
+    },
+    needsManualReview: false,
+  };
 
   const result = await prisma.$transaction(async (tx) => {
     const claimed = await tx.order.updateMany({
@@ -123,7 +138,10 @@ export async function cancelOrder(
     const { sendOrderCancelledMail } = await import("@/lib/mail");
     await sendOrderCancelledMail(order.id);
   } catch (e) {
-    console.error("[order-cancel] تعذّر إرسال بريد الإلغاء:", e);
+    console.error(
+      "[order-cancel] تعذّر إرسال بريد الإلغاء:",
+      safeErrorKind(e),
+    );
   }
 
   return { ok: true };

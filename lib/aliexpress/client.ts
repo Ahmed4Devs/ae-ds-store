@@ -1,5 +1,5 @@
 import { env } from "@/lib/env";
-import { AeApiError } from "./errors";
+import { AeApiError, normalizeAeErrorCode } from "./errors";
 import { currentTimestamp, signRequest } from "./signature";
 import { getMockResponse } from "./mock-data";
 import { getAccessToken, refreshAccessToken } from "./token";
@@ -39,14 +39,30 @@ export interface AeCallResult<T> {
 const REDACTED_EXACT = new Set([
   // أسرار المنصة
   "sign",
+  "app_key",
+  "appkey",
+  "api_key",
+  "apikey",
   "access_token",
   "refresh_token",
   "app_secret",
+  "client_secret",
+  "private_key",
+  "privatekey",
+  "authorization",
+  "cookie",
+  "set-cookie",
+  "password",
+  "passphrase",
   // أسماء أشخاص وحقول عنوان لا تحمل جذرًا مميّزًا
   "full_name",
   "fullname",
   "first_name",
   "last_name",
+  "given_name",
+  "family_name",
+  "middle_name",
+  "surname",
   "receiver_name",
   "buyer_name",
   "sender_name",
@@ -56,6 +72,20 @@ const REDACTED_EXACT = new Set([
   "zip",
   "city",
   "province",
+  "district",
+  "state",
+  "street",
+  "building",
+  "neighborhood",
+  // نصوص حرّة قد يكتب فيها العميل بيانات شخصية
+  "keyword",
+  "key_word",
+  "memo",
+  "order_memo",
+  "remark",
+  "remarks",
+  "comment",
+  "comments",
 ]);
 
 // جذور تُحجَب أينما وردت داخل اسم المفتاح (تلتقط الأشكال المركّبة مثل
@@ -73,7 +103,90 @@ const REDACTED_SUBSTRINGS = [
   "taxpayer",
   "id_card",
   "national",
+  "secret",
+  "token",
+  "credential",
 ];
+
+/**
+ * استجابة المنصة غير موثوقة حتى لو نجح TLS. الحدّ مطبّق على البايتات بعد
+ * فك ضغط HTTP لأن الاعتماد على Content-Length وحده لا يوقف قنبلة ضغط أو
+ * استجابة chunked بلا طول مُعلن.
+ */
+const MAX_AE_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+class ResponseBodyTooLargeError extends Error {
+  constructor() {
+    super("AliExpress response body exceeded the configured safety limit");
+    this.name = "ResponseBodyTooLargeError";
+  }
+}
+
+async function readBoundedResponseBody(
+  response: Response,
+  maxBytes = MAX_AE_RESPONSE_BYTES,
+): Promise<string> {
+  const declaredLength = response.headers.get("content-length")?.trim();
+  if (declaredLength && /^\d+$/.test(declaredLength)) {
+    const parsedLength = Number(declaredLength);
+    if (!Number.isSafeInteger(parsedLength) || parsedLength > maxBytes) {
+      // إلغاء الجسم يمنع إبقاء اتصال كبير قيد التنزيل بعد اكتشاف تجاوزه.
+      try {
+        await response.body?.cancel();
+      } catch {
+        // الإلغاء مساعد؛ سنرفض الاستجابة سواء نجح أم لا.
+      }
+      throw new ResponseBodyTooLargeError();
+    }
+  }
+
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let receivedBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      receivedBytes += value.byteLength;
+      if (receivedBytes > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // لا نسمح لفشل الإلغاء بتحويل الرفض الأمني إلى نجاح.
+        }
+        throw new ResponseBodyTooLargeError();
+      }
+
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** يحذف محارف التحكم ويحدّ النصوص القادمة من المزوّد قبل الخطأ أو السجل. */
+function safeUpstreamText(value: unknown, maxLength: number): string | undefined {
+  if (
+    typeof value !== "string" &&
+    typeof value !== "number" &&
+    typeof value !== "boolean"
+  ) {
+    return undefined;
+  }
+
+  const normalized = String(value)
+    .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized ? normalized.slice(0, maxLength) : undefined;
+}
 
 function isSensitiveKey(key: string): boolean {
   const k = key.toLowerCase();
@@ -132,25 +245,29 @@ function extractError(payload: unknown): { code: string; message?: string } | nu
   // صيغة خطأ البوابة
   const errResp = p.error_response as Record<string, unknown> | undefined;
   if (errResp && typeof errResp === "object") {
-    const code = errResp.code ?? errResp.type ?? errResp.msg;
+    const code = safeUpstreamText(
+      errResp.code ?? errResp.type ?? errResp.msg,
+      128,
+    );
     if (code) {
-      return { code: String(code), message: String(errResp.msg ?? "") };
+      return { code, message: safeUpstreamText(errResp.msg, 500) };
     }
   }
 
   // رمز في الجذر — "0" يعني النجاح في هذه المنصة
-  if (typeof p.code === "string" && p.code !== "0" && p.code !== "200") {
-    return { code: p.code, message: typeof p.msg === "string" ? p.msg : undefined };
+  const rootCode = safeUpstreamText(p.code, 128);
+  if (rootCode && rootCode !== "0" && rootCode !== "200") {
+    return { code: rootCode, message: safeUpstreamText(p.msg, 500) };
   }
 
   // خطأ داخل result
   const result = p.result as Record<string, unknown> | undefined;
   if (result && typeof result === "object") {
-    const ec = result.error_code;
-    if (ec && String(ec) !== "0") {
+    const ec = safeUpstreamText(result.error_code, 128);
+    if (ec && ec !== "0") {
       return {
-        code: String(ec),
-        message: typeof result.error_msg === "string" ? result.error_msg : undefined,
+        code: ec,
+        message: safeUpstreamText(result.error_msg, 500),
       };
     }
 
@@ -168,16 +285,13 @@ function extractError(payload: unknown): { code: string; message?: string } | nu
         String(result.code) !== "0" &&
         String(result.code) !== "200");
     if (isFailure) {
-      const code =
-        result.error_code ?? result.code ?? result.msg ?? "ResultError";
+      const code = safeUpstreamText(
+        result.error_code ?? result.code ?? result.msg,
+        128,
+      ) ?? "ResultError";
       return {
-        code: String(code),
-        message:
-          typeof result.error_msg === "string"
-            ? result.error_msg
-            : typeof result.msg === "string"
-              ? result.msg
-              : undefined,
+        code,
+        message: safeUpstreamText(result.error_msg ?? result.msg, 500),
       };
     }
   }
@@ -243,10 +357,12 @@ export async function callAe<T = unknown>(
 
     // المُعاملات العامة كما ينص التوثيق
     const params: Record<string, unknown> = {
+      // توضع معاملات الأعمال أولًا كي لا تستطيع أي إضافة مستقبلية تجاوز
+      // هوية التطبيق أو الساعة أو خوارزمية التوقيع بقيمة قادمة من العميل.
+      ...businessParams,
       app_key: cfg.AE_APP_KEY,
       timestamp: currentTimestamp(),
       sign_method: "sha256",
-      ...businessParams,
     };
 
     if (requiresAuth) {
@@ -277,6 +393,21 @@ export async function callAe<T = unknown>(
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+    /** يسجّل فشل صيغة/حجم الاستجابة مرة واحدة ثم يعيده بخطأ آمن. */
+    async function rejectUnsafeResponse(message: string): Promise<never> {
+      const failure = { code: "InternalError", message };
+      await logCall({
+        apiName,
+        mode: "live",
+        success: false,
+        error: failure,
+        durationMs: Date.now() - startedAttempt,
+        params,
+        orderId: options.orderId,
+      });
+      throw new AeApiError({ apiName, ...failure });
+    }
+
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -286,18 +417,45 @@ export async function callAe<T = unknown>(
         body,
         signal: controller.signal,
         cache: "no-store",
+        // A redirect could replay the credential-bearing form body to another
+        // origin. AliExpress endpoints are fixed and must answer directly.
+        redirect: "error",
       });
 
-      const text = await res.text();
+      const mediaType = res.headers
+        .get("content-type")
+        ?.split(";", 1)[0]
+        ?.trim()
+        .toLowerCase();
+      if (
+        mediaType !== "application/json" &&
+        !mediaType?.endsWith("+json")
+      ) {
+        await res.body?.cancel().catch(() => undefined);
+        await rejectUnsafeResponse(
+          `أعادت AliExpress نوع محتوى غير صالح (HTTP ${res.status}).`,
+        );
+      }
+
+      let text = "";
+      try {
+        text = await readBoundedResponseBody(res);
+      } catch (e) {
+        if (!(e instanceof ResponseBodyTooLargeError)) throw e;
+        await rejectUnsafeResponse(
+          `تجاوز جسم استجابة AliExpress الحد الآمن (HTTP ${res.status}).`,
+        );
+      }
+
       let payload: unknown;
       try {
         payload = JSON.parse(text);
       } catch {
-        throw new AeApiError({
-          apiName,
-          code: "InternalError",
-          message: `استجابة غير صالحة (HTTP ${res.status}): ${text.slice(0, 200)}`,
-        });
+        // لا نضمّن مقتطفًا من الجسم: قد يكون HTML به أسرار، أو نصًا يحقن
+        // أسطرًا مزوّرة في السجل، أو بيانات شخصية ارتدّت من طلبنا.
+        await rejectUnsafeResponse(
+          `أعادت AliExpress استجابة ليست JSON صالحة (HTTP ${res.status}).`,
+        );
       }
 
       const durationMs = Date.now() - startedAttempt;
@@ -316,6 +474,14 @@ export async function callAe<T = unknown>(
         throw new AeApiError({ apiName, code: err.code, message: err.message });
       }
 
+      // نجاح بنيوي داخل JSON لا يلغي فشل طبقة HTTP. قبول 4xx/5xx بلا
+      // error_response كان يسجّل الاستدعاء نجاحًا ويمرّر كائنًا ناقصًا.
+      if (!res.ok) {
+        await rejectUnsafeResponse(
+          `أعادت AliExpress حالة HTTP ${res.status} بلا خطأ مهيكل.`,
+        );
+      }
+
       await logCall({
         apiName,
         mode: "live",
@@ -332,7 +498,9 @@ export async function callAe<T = unknown>(
       const wrapped = new AeApiError({
         apiName,
         code: isAbort ? "isp.service-unavailable" : "InternalError",
-        message: e instanceof Error ? e.message : String(e),
+        message: isAbort
+          ? "انتهت مهلة الاتصال بمنصة AliExpress."
+          : "فشل الاتصال بمنصة AliExpress.",
       });
       await logCall({
         apiName,
@@ -397,15 +565,25 @@ async function logCall(entry: {
   try {
     const { prisma } = await import("@/lib/db");
     const { classifyErrorCode } = await import("./errors");
+    const safeErrorCode = entry.error?.code
+      ? normalizeAeErrorCode(entry.error.code)
+      : undefined;
+    // Never persist the provider's prose. A signed/TLS response can still
+    // reflect a token or customer field; documented local wording is enough
+    // for diagnosis while the normalized code preserves classification.
+    const safeErrorMessage = safeErrorCode
+      ? new AeApiError({ apiName: entry.apiName, code: safeErrorCode })
+          .operatorMessage
+      : undefined;
     await prisma.aeApiLog.create({
       data: {
         apiName: entry.apiName,
         mode: entry.mode,
         success: entry.success,
-        errorCode: entry.error?.code ?? null,
-        errorMessage: entry.error?.message?.slice(0, 500) ?? null,
-        retryable: entry.error
-          ? classifyErrorCode(entry.error.code) === "RETRYABLE"
+        errorCode: safeErrorCode ?? null,
+        errorMessage: safeErrorMessage ?? null,
+        retryable: safeErrorCode
+          ? classifyErrorCode(safeErrorCode) === "RETRYABLE"
           : null,
         durationMs: entry.durationMs,
         orderId: entry.orderId ?? null,

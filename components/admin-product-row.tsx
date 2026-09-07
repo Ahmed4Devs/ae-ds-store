@@ -9,7 +9,7 @@ import {
   togglePublishAction,
 } from "@/app/actions/admin-catalog";
 import { Badge, Button, Input } from "@/components/ui";
-import { formatSar } from "@/lib/pricing";
+import { formatSar } from "@/lib/pricing/format";
 import { formatDateAr } from "@/lib/ksa";
 import { fill, type Dictionary, type Locale } from "@/lib/i18n/shared";
 
@@ -110,6 +110,7 @@ export function AdminProductRow({
                 src={product.imageUrl}
                 alt=""
                 loading="lazy"
+                referrerPolicy="no-referrer"
                 className="size-full object-cover"
               />
             )}

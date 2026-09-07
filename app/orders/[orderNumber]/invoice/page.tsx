@@ -7,9 +7,10 @@ import { env } from "@/lib/env";
 import { getCurrentUser } from "@/lib/session";
 import { ownsGuestOrder } from "@/lib/guest-orders";
 import { buildZatcaTlv, zatcaQrDataUrl } from "@/lib/zatca";
-import type { ShippingAddress } from "@/lib/ksa";
+import { shippingAddressSchema } from "@/lib/ksa";
 import { getDictionary, getLocale } from "@/lib/i18n";
 import type { OrderStatus } from "@/lib/generated/prisma/client";
+import { isOrderNumber } from "@/lib/order-number";
 
 /**
  * الفاتورة الضريبية المبسّطة لطلبية واحدة.
@@ -44,6 +45,7 @@ export default async function OrderInvoicePage(
   props: PageProps<"/orders/[orderNumber]/invoice">,
 ) {
   const { orderNumber } = await props.params;
+  if (!isOrderNumber(orderNumber)) notFound();
 
   const [user, t, locale] = await Promise.all([
     getCurrentUser(),
@@ -76,6 +78,9 @@ export default async function OrderInvoicePage(
     notFound();
   }
 
+  const parsedAddress = shippingAddressSchema.safeParse(order.shippingSnapshot);
+  if (!parsedAddress.success) notFound();
+
   if (!INVOICEABLE.has(order.status)) {
     return (
       <>
@@ -97,7 +102,7 @@ export default async function OrderInvoicePage(
   }
 
   const cfg = env();
-  const addr = order.shippingSnapshot as unknown as ShippingAddress;
+  const addr = parsedAddress.data;
 
   // المبالغ Decimal في قاعدة البيانات — بلا Number() تصير المقارنة والجمع
   // على كائنات لا على أرقام.

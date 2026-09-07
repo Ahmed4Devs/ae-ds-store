@@ -5,8 +5,9 @@ import { SignOutButton } from "@/components/sign-out-button";
 import { AddressManager } from "@/components/address-manager";
 import { ChangePasswordForm } from "@/components/change-password-form";
 import { ProfileForm } from "@/components/profile-form";
+import { AdminTwoFactorPanel } from "@/components/admin-two-factor-panel";
 import { ButtonLink, Card } from "@/components/ui";
-import { getCurrentUser } from "@/lib/session";
+import { getCurrentUser, isAdmin } from "@/lib/session";
 import { prisma } from "@/lib/db";
 import { getDictionary } from "@/lib/i18n";
 
@@ -19,7 +20,11 @@ export default async function AccountPage() {
   const [user, t] = await Promise.all([getCurrentUser(), getDictionary()]);
   if (!user) redirect("/login");
 
-  const [orderCount, addresses] = await Promise.all([
+  const isAdminRole = (user as { role?: string }).role === "ADMIN";
+  const twoFactorEnabled =
+    (user as { twoFactorEnabled?: boolean }).twoFactorEnabled === true;
+
+  const [orderCount, addresses, hasAdminAccess] = await Promise.all([
     prisma.order.count({ where: { userId: user.id } }),
     // كل العناوين لا أول خمسة: هذه الآن شاشة إدارة، وقصّ القائمة يعني
     // عنوانًا لا يستطيع صاحبه حذفه ولا تعديله.
@@ -27,9 +32,9 @@ export default async function AccountPage() {
       where: { userId: user.id },
       orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }],
     }),
+    isAdminRole ? isAdmin() : Promise.resolve(false),
   ]);
 
-  const isAdmin = (user as { role?: string }).role === "ADMIN";
   const phone = (user as { phone?: string | null }).phone ?? "";
 
   return (
@@ -91,6 +96,18 @@ export default async function AccountPage() {
           />
         </Card>
 
+        {isAdminRole && (
+          <Card className="mb-5 p-5">
+            <p className="mb-4 font-semibold">{t.account.twoFactorTitle}</p>
+            <AdminTwoFactorPanel
+              enabled={twoFactorEnabled}
+              sessionVerified={hasAdminAccess}
+              labels={t.account}
+              processingLabel={t.auth.processing}
+            />
+          </Card>
+        )}
+
         <div className="mb-5 grid gap-4 sm:grid-cols-2">
           <Card className="p-5">
             <p className="text-sm text-ink-500">{t.account.ordersCount}</p>
@@ -127,7 +144,7 @@ export default async function AccountPage() {
           common={t.common}
         />
 
-        {isAdmin && (
+        {hasAdminAccess && (
           <Card className="p-5">
             <p className="mb-1 font-semibold">{t.account.adminTitle}</p>
             <p className="mb-3 text-sm text-ink-500">

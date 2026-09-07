@@ -1,4 +1,7 @@
+
 import { env } from "@/lib/env";
+
+export { formatSar } from "./format";
 
 /**
  * محرّك التسعير.
@@ -166,12 +169,3 @@ function round2(n: number): number {
  * تُستخدم الأرقام اللاتينية عمدًا في الحالتين لأنها العرف السائد في
  * المتاجر السعودية وأسهل في المسح البصري للأسعار.
  */
-export function formatSar(amount: number, locale: "ar" | "en" = "ar"): string {
-  const tag = locale === "ar" ? "ar-SA-u-nu-latn" : "en-SA";
-  return new Intl.NumberFormat(tag, {
-    style: "currency",
-    currency: "SAR",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
-}

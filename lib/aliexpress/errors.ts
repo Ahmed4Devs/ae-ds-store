@@ -35,6 +35,11 @@ interface ErrorRule {
  * الرموز مأخوذة حرفيًا من صفحات الواجهات في التوثيق الرسمي.
  */
 const ERROR_RULES: Record<string, ErrorRule> = {
+  INVALID_LOCAL_INPUT: {
+    class: "INVALID_INPUT",
+    operatorMessage: "رفض التطبيق مدخلًا غير صالح قبل إرساله إلى المنصة.",
+    customerMessage: "تعذّر التحقق من بيانات الطلب بأمان.",
+  },
   // --- ds.order.create ---
   REPEATED_ORDER_ERROR: {
     class: "DUPLICATE",
@@ -82,6 +87,17 @@ const ERROR_RULES: Record<string, ErrorRule> = {
   ERROR_WHEN_BUILD_FOR_PLACE_ORDER: {
     class: "FATAL",
     operatorMessage: "خطأ أثناء تجهيز الطلبية. التوثيق ينص على التواصل مع الدعم الفني.",
+  },
+  INVALID_ORDER_CREATE_RESPONSE: {
+    class: "FATAL",
+    operatorMessage:
+      "أعلنت المنصة نجاح الإنشاء دون معرّفات فريدة قابلة للمطابقة. لا تُعد المحاولة قبل التحقق اليدوي.",
+  },
+  INVALID_UPSTREAM_FINANCIAL_DATA: {
+    class: "FATAL",
+    operatorMessage:
+      "أعادت المنصة سعرًا أو عملة أو مخزونًا غير صالح. أوقف بيع المنتج حتى تتطابق البيانات.",
+    customerMessage: "بيانات سعر هذا المنتج غير متاحة بأمان حاليًا.",
   },
   A001_ORDER_CANNOT_BE_PLACED: {
     class: "FATAL",
@@ -195,6 +211,24 @@ const ERROR_RULES: Record<string, ErrorRule> = {
   },
 };
 
+/**
+ * Provider error identifiers are untrusted data, not log text. Preserve only
+ * codes in the reviewed documentation map. An unknown value becomes one fixed
+ * label so a compromised/reflected upstream cannot exfiltrate data through the
+ * database, logs, or operator UI by placing it in `code`.
+ */
+export function normalizeAeErrorCode(value: string): string {
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[^A-Za-z0-9_.: -]+/g, "_")
+    .replace(/\s+/g, " ")
+    .replace(/^[_ ]+|[_ ]+$/g, "")
+    .slice(0, 128);
+  return Object.hasOwn(ERROR_RULES, normalized)
+    ? normalized
+    : "UNKNOWN_UPSTREAM_ERROR";
+}
+
 /** خطأ صادر عن واجهة AliExpress مع تصنيفه. */
 export class AeApiError extends Error {
   readonly code: string;
@@ -208,14 +242,18 @@ export class AeApiError extends Error {
     code: string;
     message?: string;
   }) {
-    const rule = ERROR_RULES[opts.code];
-    super(opts.message || rule?.operatorMessage || opts.code);
+    const code = normalizeAeErrorCode(opts.code);
+    const rule = Object.hasOwn(ERROR_RULES, code) ? ERROR_RULES[code] : undefined;
+    const operatorMessage =
+      rule?.operatorMessage ?? `خطأ غير مصنّف من المنصة (${code}).`;
+    // `opts.message` is intentionally not propagated. It is provider-controlled
+    // and may reflect credentials or customer data even after control stripping.
+    super(operatorMessage);
     this.name = "AeApiError";
     this.apiName = opts.apiName;
-    this.code = opts.code;
+    this.code = code;
     this.errorClass = rule?.class ?? "FATAL";
-    this.operatorMessage =
-      rule?.operatorMessage ?? opts.message ?? `خطأ غير مصنّف: ${opts.code}`;
+    this.operatorMessage = operatorMessage;
     this.customerMessage =
       rule?.customerMessage ??
       "تعذّر إتمام العملية حاليًا. يُرجى المحاولة لاحقًا.";
@@ -238,5 +276,5 @@ export class AeApiError extends Error {
 }
 
 export function classifyErrorCode(code: string): ErrorClass {
-  return ERROR_RULES[code]?.class ?? "FATAL";
+  return Object.hasOwn(ERROR_RULES, code) ? ERROR_RULES[code].class : "FATAL";
 }

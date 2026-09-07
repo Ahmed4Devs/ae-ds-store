@@ -3,7 +3,9 @@ import { prisma } from "@/lib/db";
 import { getCurrentUser } from "@/lib/session";
 import { ownsGuestOrder } from "@/lib/guest-orders";
 import { syncOrderIfStale } from "@/lib/order-sync";
-import type { OrderTrackingDto, TrackingNodeDto } from "@/lib/query/keys";
+import type { OrderTrackingDto } from "@/lib/query/keys";
+import { isOrderNumber } from "@/lib/order-number";
+import { serializeTrackingNodes } from "@/lib/tracking";
 
 /**
  * حالة الطلبية وبيانات تتبّعها.
@@ -16,6 +18,10 @@ export async function GET(
   ctx: RouteContext<"/api/orders/[orderNumber]/tracking">,
 ): Promise<NextResponse> {
   const { orderNumber } = await ctx.params;
+
+  if (!isOrderNumber(orderNumber)) {
+    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
+  }
 
   const order = await prisma.order.findUnique({
     where: { orderNumber },
@@ -70,11 +76,7 @@ export async function GET(
         cpName: p.cpName,
         cpWebsiteUrl: p.cpWebsiteUrl,
         etaAt: p.etaAt?.toISOString() ?? null,
-        nodes: ((p.nodes as unknown as TrackingNodeDto[]) ?? []).map((n) => ({
-          title: n.title,
-          description: n.description,
-          at: typeof n.at === "string" ? n.at : new Date(n.at).toISOString(),
-        })),
+        nodes: serializeTrackingNodes(p.nodes),
       })),
     ),
     updatedAt: new Date().toISOString(),

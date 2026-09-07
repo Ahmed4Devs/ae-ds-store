@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import { activeProvider, settleIntent } from "@/lib/payments";
-import { manualProvider } from "@/lib/payments/manual";
+import { settleIntent } from "@/lib/payments";
 import { moyasarProvider } from "@/lib/payments/moyasar";
 import { tapProvider } from "@/lib/payments/tap";
 import { rateLimit } from "@/lib/rate-limit";
-import type { PaymentProvider } from "@/lib/payments/types";
+import { safeErrorKind } from "@/lib/safe-log";
 
 /**
  * إشعار بوابة الدفع (webhook).
@@ -24,52 +23,76 @@ import type { PaymentProvider } from "@/lib/payments/types";
  *    يصير المسار مرآةً تُعيد ما يُرسله إليه.
  */
 
-const PROVIDERS: Record<string, PaymentProvider> = {
-  manual: manualProvider,
-  moyasar: moyasarProvider,
-  tap: tapProvider,
-};
+const PROVIDERS = [moyasarProvider, tapProvider] as const;
+const MAX_WEBHOOK_BODY_BYTES = 64 * 1024;
+const WEBHOOK_BODY_TIMEOUT_MS = 5_000;
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<NextResponse> {
-  /**
-   * خنق خفيف بمفتاح المسار لا بعنوان العميل.
-   *
-   * المسار مستثنى من خنق `proxy.ts` عمدًا (وإلّا تقاسم الإشعارُ سلّةً
-   * واحدة مع كل زائر بلا بروكسي)، لكن ترك المسار بلا أي حدّ يجعله بابًا
-   * لإغراق قاعدة البيانات بمحاولات تحقّق فاشلة. السقف مرتفع كي لا يصطدم
-   * به تدفّق إشعارات مشروع.
-   */
-  const { ok, retryAfter } = rateLimit("payments:webhook", 600, 60_000);
-  if (!ok) {
-    return NextResponse.json(
-      { error: "RATE_LIMITED" },
-      { status: 429, headers: { "Retry-After": String(retryAfter) } },
-    );
+  const contentType = request.headers
+    .get("content-type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  if (contentType !== "application/json") {
+    return json({ error: "UNSUPPORTED_MEDIA_TYPE" }, 415);
   }
 
-  const provider = PROVIDERS[activeProvider()];
-
-  // المزوّد اليدوي لا يملك إشعارات — لا نكشف حتى أن المسار قائم له
-  if (!provider || provider.name === "manual") {
-    return NextResponse.json({ error: "NOT_FOUND" }, { status: 404 });
-  }
-
-  const rawBody = await request.text();
-
-  let event;
+  let rawBody: string;
   try {
-    event = await provider.verifyWebhook(request, rawBody);
-  } catch (e) {
-    console.error("[payments] خطأ أثناء التحقق من الإشعار:", e);
-    return NextResponse.json({ error: "INVALID" }, { status: 401 });
+    rawBody = await readWebhookBody(request);
+  } catch (error) {
+    const status = error instanceof WebhookBodyError ? error.status : 400;
+    return json({ error: status === 413 ? "BODY_TOO_LARGE" : "INVALID_BODY" }, status);
+  }
+
+  // لا نربط المسار بالمزوّد النشط اليوم: إشعار نيّة قديمة يبقى صالحًا بعد
+  // تبديل PAYMENT_PROVIDER، ويُحسم التطابق النهائي باسم المزوّد في السجلّ.
+  let event = null;
+  let verificationUnavailable = false;
+  for (const provider of PROVIDERS) {
+    try {
+      event = await provider.verifyWebhook(request, rawBody);
+      if (event) break;
+    } catch (error) {
+      verificationUnavailable = true;
+      console.error(
+        `[payments] تعذّر التحقق عبر ${provider.name}:`,
+        safeErrorKind(error),
+      );
+    }
   }
 
   // فشل التحقق يُردّ بـ 401 بلا تفصيل: الردّ لا يعلّم المهاجم شيئًا عن
   // مدى اقترابه من توقيع صحيح.
   if (!event) {
-    return NextResponse.json({ error: "INVALID" }, { status: 401 });
+    // عطل شبكة أثناء جلب فاتورة Moyasar الموثوقة يجب أن يعاد، لا أن يبدو
+    // توقيعًا خاطئًا فتسقط البوابة الإشعار المالي نهائيًا.
+    return json(
+      { error: verificationUnavailable ? "VERIFY_UNAVAILABLE" : "INVALID" },
+      verificationUnavailable ? 503 : 401,
+    );
+  }
+
+  // الخنق بعد التوقيع ومفتاحه المرجع نفسه: جسم مزوّر لا يستطيع استنفاد
+  // سلّة كل الإشعارات المشروعة، وإعادة مرجع واحد لا تحجب بقية الدفعات.
+  const { ok, retryAfter } = rateLimit(
+    `payments:webhook:${event.provider}:${event.providerRef}`,
+    60,
+    60_000,
+  );
+  if (!ok) {
+    return NextResponse.json(
+      { error: "RATE_LIMITED" },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(retryAfter),
+          "Cache-Control": "no-store",
+        },
+      },
+    );
   }
 
   // الحالات غير النهائية لا تُسوّى — تصل إشعارات وسيطة كثيرة، وتسويتها
@@ -80,27 +103,97 @@ export async function POST(request: Request): Promise<NextResponse> {
     event.status !== "EXPIRED" &&
     event.status !== "REFUNDED"
   ) {
-    return NextResponse.json({ received: true }, { status: 200 });
+    return json({ received: true }, 200);
   }
 
   try {
     await settleIntent(event.providerRef, {
       status: event.status,
+      provider: event.provider,
       failureCode: event.failureCode,
       failureMessage: event.failureMessage,
+      requiresManualReview: event.requiresManualReview,
       // المبلغ المأخوذ فعلًا — تقارنه التسوية بمبلغ النيّة قبل الشراء
       amountSar: event.amountSar,
+      currency: event.currency,
       payload: event.payload,
     });
   } catch (e) {
     // خطأ عندنا لا عند المزوّد: نعيد 500 كي تعيد البوابة المحاولة، لأن
     // الطلبية مدفوعة فعلًا ويجب أن تُصدَّر.
-    console.error("[payments] تعذّرت تسوية الإشعار:", e);
-    return NextResponse.json({ error: "INTERNAL" }, { status: 500 });
+    console.error(
+      "[payments] تعذّرت تسوية الإشعار:",
+      safeErrorKind(e),
+    );
+    return json({ error: "INTERNAL" }, 500);
   }
 
-  return NextResponse.json(
-    { received: true },
-    { status: 200, headers: { "Cache-Control": "no-store" } },
-  );
+  return json({ received: true }, 200);
+}
+
+function json(body: object, status: number): NextResponse {
+  return NextResponse.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
+}
+
+class WebhookBodyError extends Error {
+  constructor(readonly status: 400 | 408 | 413) {
+    super(`WEBHOOK_BODY_${status}`);
+  }
+}
+
+/** قراءة خام محدودة؛ لا نستخدم request.json لأن Tap توقّع الحقول الخام. */
+async function readWebhookBody(request: Request): Promise<string> {
+  const declared = request.headers.get("content-length");
+  if (declared != null) {
+    if (!/^\d+$/u.test(declared)) throw new WebhookBodyError(400);
+    if (Number(declared) > MAX_WEBHOOK_BODY_BYTES) {
+      throw new WebhookBodyError(413);
+    }
+  }
+
+  if (!request.body) return "";
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new WebhookBodyError(408)),
+      WEBHOOK_BODY_TIMEOUT_MS,
+    );
+  });
+
+  try {
+    while (true) {
+      const { done, value } = await Promise.race([reader.read(), timedOut]);
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_WEBHOOK_BODY_BYTES) {
+        throw new WebhookBodyError(413);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel("invalid webhook body").catch(() => undefined);
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new WebhookBodyError(400);
+  }
 }

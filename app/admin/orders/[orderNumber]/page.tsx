@@ -8,9 +8,9 @@ import { AdminOrderActions } from "@/components/admin-order-actions";
 import { prisma } from "@/lib/db";
 import { activeProvider } from "@/lib/payments";
 import { formatSar } from "@/lib/pricing";
-import { formatDateAr, formatSaudiPhone } from "@/lib/ksa";
-import type { ShippingAddress } from "@/lib/ksa";
+import { formatDateAr, formatSaudiPhone, shippingAddressSchema } from "@/lib/ksa";
 import { fill, getDictionary, getLocale } from "@/lib/i18n";
+import { isOrderNumber } from "@/lib/order-number";
 
 /** ألوان شارات حالة الدفع — النهائية الناجحة خضراء والفاشلة حمراء. */
 const PAYMENT_TONES: Record<
@@ -36,6 +36,7 @@ export default async function AdminOrderPage(
   // حارس ذاتي — لا يُكتفى بحماية التخطيط (راجع requireAdmin). يسبق كل قراءة.
   await requireAdmin();
   const { orderNumber } = await props.params;
+  if (!isOrderNumber(orderNumber)) notFound();
   const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
 
   const order = await prisma.order.findUnique({
@@ -51,13 +52,16 @@ export default async function AdminOrderPage(
 
   if (!order) notFound();
 
+  const parsedAddress = shippingAddressSchema.safeParse(order.shippingSnapshot);
+  if (!parsedAddress.success) notFound();
+
   const logs = await prisma.aeApiLog.findMany({
     where: { orderId: order.id },
     orderBy: { createdAt: "desc" },
     take: 20,
   });
 
-  const addr = order.shippingSnapshot as unknown as ShippingAddress;
+  const addr = parsedAddress.data;
   const costSar =
     (Number(order.costSubtotal) + Number(order.costShipping)) *
     Number(order.fxRateUsed);
@@ -148,7 +152,12 @@ export default async function AdminOrderPage(
                     <span className="size-14 shrink-0 overflow-hidden rounded-lg bg-ink-100 dark:bg-ink-800">
                       {it.imageSnapshot && (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={it.imageSnapshot} alt="" className="size-full object-cover" />
+                        <img
+                          src={it.imageSnapshot}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                          className="size-full object-cover"
+                        />
                       )}
                     </span>
                     <div className="min-w-0 flex-1 text-sm">

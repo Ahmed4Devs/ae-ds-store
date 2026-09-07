@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { requireAdmin } from "@/lib/session";
 import { Badge, Card, EmptyState } from "@/components/ui";
 import { SyncOrdersButton } from "@/components/retry-sourcing";
@@ -15,6 +16,13 @@ export default async function ApiLogPage(props: PageProps<"/admin/api-log">) {
   // حارس ذاتي — لا يُكتفى بحماية التخطيط (راجع requireAdmin). يسبق كل قراءة.
   await requireAdmin();
   const sp = await props.searchParams;
+  if (
+    Object.keys(sp).some((key) => key !== "failed") ||
+    Array.isArray(sp.failed) ||
+    (sp.failed !== undefined && sp.failed !== "1")
+  ) {
+    notFound();
+  }
   const onlyFailed = sp.failed === "1";
 
   const [t, locale] = await Promise.all([getDictionary(), getLocale()]);
