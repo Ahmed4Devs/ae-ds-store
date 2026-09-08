@@ -312,6 +312,13 @@ model Order {
 
   @@index([userId])
   @@index([status])
+  // قوائم العميل والإدارة تُرتّب زمنيًا دائمًا. الفهارس المركّبة تمنع
+  // فرز عدد كبير من الصفوف بعد التصفية عند نمو المتجر.
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  // طابور التدخّل البشري مسار تشغيلي مستقل عن status: قد تحتاج دفعة
+  // أو استرداد للمراجعة بينما تبقى حالة الطلب الظاهرة كما هي.
+  @@index([needsManualReview, createdAt])
   @@index([guestAccessExpiresAt])
 }
 

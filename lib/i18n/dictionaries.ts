@@ -590,7 +590,7 @@ export const ar = {
     manualReferenceNote: "اذكر مرجع العملية في وصف التحويل.",
     statusAwaitingTitle: "بانتظار تأكيد الدفع",
     statusAwaitingBody:
-      "استلمنا محاولتك ولم يصلنا تأكيد المزوّد بعد. تُحدَّث هذه الصفحة تلقائيًا.",
+      "استلمنا محاولتك ولم يصلنا تأكيد المزوّد بعد. سنتحقق تلقائيًا خلال الدقيقة القادمة، ويمكنك تحديث الصفحة لاحقًا.",
     statusPaidTitle: "تم الدفع",
     statusPaidBody: "شكرًا لك. بدأ تجهيز طلبك وستصلك تحديثات التتبع.",
     statusFailedTitle: "لم يكتمل الدفع",
@@ -1355,7 +1355,7 @@ export const en: Dictionary = {
     manualReferenceNote: "Include the transaction reference in the transfer description.",
     statusAwaitingTitle: "Awaiting payment confirmation",
     statusAwaitingBody:
-      "We received your attempt and the provider has not confirmed it yet. This page updates automatically.",
+      "We received your attempt and the provider has not confirmed it yet. We will check automatically for the next minute; you can refresh later.",
     statusPaidTitle: "Payment received",
     statusPaidBody:
       "Thank you. Your order is being processed and tracking updates will follow.",

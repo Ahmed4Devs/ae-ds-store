@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
 import { authClient } from "@/lib/auth-client";
-import { Button, Field, Input } from "@/components/ui";
+import { Alert, Button, Field, Input } from "@/components/ui";
 import type { Dictionary } from "@/lib/i18n/shared";
 
 type Labels = Dictionary["auth"];
@@ -41,6 +41,8 @@ export function AuthForm({
   const [formError, setFormError] = useState<string | null>(null);
   /** البريد الذي فشل دخوله لأنه غير مؤكَّد — يفتح زرّ إعادة الإرسال */
   const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null);
+  /** نجاح التسجيل بلا جلسة: ينتظر المستخدم تأكيد بريده قبل الدخول. */
+  const [verificationEmail, setVerificationEmail] = useState<string | null>(null);
   const [resent, setResent] = useState(false);
 
   function resendVerification(email: string): void {
@@ -125,9 +127,51 @@ export function AuthForm({
         return;
       }
 
+      // عند إلزام تأكيد البريد يعيد Better Auth نجاحًا مع token: null.
+      // هذا نجاح إنشاء حساب، لكنه ليس جلسة مصادقة ولا يجوز توجيهه إلى
+      // /account؛ نعرض الخطوة المطلوبة بوضوح ونتيح إعادة إرسال الرابط.
+      if (
+        mode === "signup" &&
+        (!res.data ||
+          typeof res.data !== "object" ||
+          !("token" in res.data) ||
+          typeof res.data.token !== "string" ||
+          res.data.token.length === 0)
+      ) {
+        setVerificationEmail(raw.email);
+        setResent(false);
+        return;
+      }
+
       router.push("/account");
       router.refresh();
     });
+  }
+
+  if (mode === "signup" && verificationEmail) {
+    return (
+      <div className="space-y-4" role="status" aria-live="polite">
+        <Alert tone="success" title={labels.verifyTitle}>
+          <p>{labels.verifyBody}</p>
+        </Alert>
+
+        {!resent ? (
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={() => resendVerification(verificationEmail)}
+            disabled={pending}
+          >
+            {labels.verifyResend}
+          </Button>
+        ) : (
+          <p className="text-center text-sm font-medium text-emerald-700 dark:text-emerald-300">
+            {labels.verifyResent}
+          </p>
+        )}
+      </div>
+    );
   }
 
   return (

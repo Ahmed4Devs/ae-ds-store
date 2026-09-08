@@ -80,9 +80,20 @@ export interface CartSummary {
   hasUntracked: boolean;
 }
 
+/**
+ * وجهة اختيارية لتسعير الشحن. صفحة المنتج والسلة تستطيعان عرض تقدير على
+ * مستوى الدولة، أما التثبيت والدفع فيمرران المحافظة الفعلية من عنوان موثوق.
+ */
+export interface ShippingDestination {
+  province?: string;
+  provinceCode?: string;
+  cityCode?: string;
+}
+
 export async function buildCartSummary(
   cart: Cart,
   localeArg?: Locale,
+  destination?: ShippingDestination,
 ): Promise<CartSummary> {
   // لا تُقرأ الكوكيز هنا: الدالة تُستدعى أيضًا من سياقات بلا طلب
   const locale = localeArg ?? DEFAULT_LOCALE;
@@ -109,6 +120,13 @@ export async function buildCartSummary(
         getShippingOptions({
           aeProductId: item.aeProductId,
           quantity: item.quantity,
+          ...(destination?.province
+            ? { province: destination.province }
+            : {}),
+          ...(destination?.provinceCode
+            ? { provinceCode: destination.provinceCode }
+            : {}),
+          ...(destination?.cityCode ? { cityCode: destination.cityCode } : {}),
         }),
       ]);
 

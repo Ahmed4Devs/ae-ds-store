@@ -247,8 +247,8 @@ npm run verify:query      # 11 فحصًا عامًا + دخول ADMIN اختيا
 npm run verify:query:isolated # 14 فحصًا بلا تخطٍّ
 npm run security:preflight # read-only قبل prisma migrate deploy
 
-npm run verify:migrations # السلسلة كاملة في schema عابر     (12 ترحيلًا)
-npm run verify:boundaries # الكوكيز/JSON/الأحجام والسجل       (23)
+npm run verify:migrations # السلسلة كاملة في schema عابر     (13 ترحيلًا)
+npm run verify:boundaries # الكوكيز/JSON/الأحجام والسجل       (25)
 npm run verify:ae         # طبقة التكامل والتوقيع            (27)
 npm run verify:ae-client  # النقل الحي والـ MIME والحجم        (5)
 npm run verify:pricing    # التسعير وقواعد السعودية          (24)

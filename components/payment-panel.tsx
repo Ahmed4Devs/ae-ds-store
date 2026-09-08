@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { startPaymentAction } from "@/app/actions/payment";
 import { Alert, Button } from "@/components/ui";
@@ -13,10 +13,12 @@ import { Alert, Button } from "@/components/ui";
  *    وينتهي دور العميل عند التحويل.
  *  • بوابة مستضافة — نُنشئ النيّة ثم نغادر إلى صفحة المزوّد.
  *
- * لا استقصاء دوري هنا: التأكيد يصل عبر إشعار خادم-إلى-خادم يعيد بناء
- * الصفحة، والعميل يعود إليها بتحويل من المزوّد. إضافة مؤقّت يستجوب
- * الخادم كل ثوانٍ كانت ستُثقل مسارًا لا يتغيّر إلا بحدث خارجي واحد.
+ * في حالة PENDING نستقصي الصفحة لفترة محدودة فقط. إشعار المزوّد هو مصدر
+ * الحقيقة، وrouter.refresh يعيد قراءة حالته من الخادم دون إنشاء نيّة أخرى.
  */
+
+const PAYMENT_POLL_INTERVAL_MS = 5_000;
+const PAYMENT_POLL_MAX_ATTEMPTS = 12;
 
 export interface PaymentPanelLabels {
   payNow: string;
@@ -37,6 +39,7 @@ export function PaymentPanel({
   providerRef,
   checkoutUrl,
   canRetry,
+  pollPendingStatus,
   labels,
 }: {
   orderNumber: string;
@@ -46,12 +49,35 @@ export function PaymentPanel({
   checkoutUrl: string | null;
   /** انتهت المهلة أو فشلت المحاولة السابقة، فيُعرض زرّ محاولة جديدة */
   canRetry: boolean;
+  /** توجد نيّة PENDING؛ حدّث بيانات الخادم لمدة دقيقة كحد أقصى. */
+  pollPendingStatus: boolean;
   labels: PaymentPanelLabels;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+
+  useEffect(() => {
+    if (!pollPendingStatus) return;
+
+    let attempts = 0;
+    const intervalId = window.setInterval(() => {
+      attempts += 1;
+
+      // لا نهدر طلبات عندما تكون الصفحة مخفية، مع بقاء العدّاد زمنيًا
+      // محدودًا حتى لا يستمر الاستقصاء إلى أجل غير مسمّى.
+      if (document.visibilityState === "visible") {
+        router.refresh();
+      }
+
+      if (attempts >= PAYMENT_POLL_MAX_ATTEMPTS) {
+        window.clearInterval(intervalId);
+      }
+    }, PAYMENT_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [pollPendingStatus, router]);
 
   function start(): void {
     setError(null);

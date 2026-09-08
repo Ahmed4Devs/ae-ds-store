@@ -482,7 +482,9 @@ function normalizeOption(
 export interface FreightParams {
   aeProductId: string;
   quantity: number;
-  /** يُدعّم البحث حسب المنطقة داخل السعودية */
+  /** اسم المحافظة كما تقبله queryDeliveryReq.province. */
+  province?: string;
+  /** رمز المحافظة؛ لا يُرسل مع province في الطلب نفسه. */
   provinceCode?: string;
   cityCode?: string;
 }
@@ -497,10 +499,13 @@ export async function getShippingOptions(
     !Number.isSafeInteger(p.quantity) ||
     p.quantity < 1 ||
     p.quantity > 50 ||
-    [p.provinceCode, p.cityCode].some(
+    (p.province != null && p.provinceCode != null) ||
+    [p.province, p.provinceCode, p.cityCode].some(
       (value) =>
         value != null &&
-        (value.length > 64 || /[\u0000-\u001f\u007f]/u.test(value)),
+        (value.trim().length === 0 ||
+          value.length > 64 ||
+          /[\u0000-\u001f\u007f]/u.test(value)),
     )
   ) {
     throw new AeApiError({
@@ -516,6 +521,7 @@ export async function getShippingOptions(
       shipToCountry: cfg.STORE_COUNTRY,
       language: "en_US",
       locale: cfg.STORE_LOCALE,
+      ...(p.province ? { province: p.province } : {}),
       ...(p.provinceCode ? { provinceCode: p.provinceCode } : {}),
       ...(p.cityCode ? { cityCode: p.cityCode } : {}),
     }),

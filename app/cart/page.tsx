@@ -1,6 +1,6 @@
 import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { CartLines } from "@/components/cart-lines";
-import { Alert, ButtonLink, Card, EmptyState } from "@/components/ui";
+import { Alert, Button, ButtonLink, Card, EmptyState } from "@/components/ui";
 import { readCart } from "@/lib/cart";
 import { buildCartSummary } from "@/lib/cart-service";
 import { formatSar } from "@/lib/pricing";
@@ -99,17 +99,27 @@ export default async function CartPage() {
                 </p>
               )}
 
-              <ButtonLink
-                href="/checkout"
-                size="lg"
-                className="mt-5 w-full"
-                aria-disabled={summary.hasIssues}
-              >
-                {t.cart.checkout}
-              </ButtonLink>
+              {summary.hasIssues ? (
+                <Button
+                  type="button"
+                  size="lg"
+                  className="mt-5 w-full"
+                  disabled
+                  aria-describedby="cart-checkout-issues"
+                >
+                  {t.cart.checkout}
+                </Button>
+              ) : (
+                <ButtonLink href="/checkout" size="lg" className="mt-5 w-full">
+                  {t.cart.checkout}
+                </ButtonLink>
+              )}
 
               {summary.hasIssues && (
-                <p className="mt-2 text-center text-xs text-amber-700 dark:text-amber-400">
+                <p
+                  id="cart-checkout-issues"
+                  className="mt-2 text-center text-xs text-amber-700 dark:text-amber-400"
+                >
                   {t.cart.fixIssues}
                 </p>
               )}

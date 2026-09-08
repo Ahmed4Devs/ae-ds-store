@@ -67,6 +67,7 @@ export default async function PayPage(props: PageProps<"/pay/[orderNumber]">) {
     order.status === "SOURCED" ||
     order.status === "SHIPPED" ||
     order.status === "DELIVERED";
+  const refunded = intent?.status === "REFUNDED";
 
   const shell = (children: React.ReactNode) => (
     <>
@@ -77,6 +78,22 @@ export default async function PayPage(props: PageProps<"/pay/[orderNumber]">) {
       <SiteFooter />
     </>
   );
+
+  // الاسترداد حالة دفع نهائية مستقلة، وغالبًا تكون الطلبية ملغاة أيضًا.
+  // عرض الإلغاء أولًا كان يخفي عن العميل أن ماله أُعيد بالفعل.
+  if (refunded) {
+    return shell(
+      <>
+        <h1 className="mb-6 text-2xl font-bold">{t.payment.title}</h1>
+        <Alert tone="success" title={t.payment.statusRefundedTitle}>
+          <p>{t.payment.statusRefundedBody}</p>
+        </Alert>
+        <div className="mt-5">
+          <ButtonLink href={orderHref}>{t.orders.detailTitle}</ButtonLink>
+        </div>
+      </>,
+    );
+  }
 
   if (order.status === "CANCELLED") {
     return shell(
@@ -183,6 +200,7 @@ export default async function PayPage(props: PageProps<"/pay/[orderNumber]">) {
         providerRef={canRetry ? null : (intent?.providerRef ?? null)}
         checkoutUrl={canRetry ? null : (intent?.checkoutUrl ?? null)}
         canRetry={canRetry}
+        pollPendingStatus={awaiting}
         labels={{
           payNow: t.payment.payNow,
           processing: t.payment.processing,

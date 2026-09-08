@@ -156,6 +156,27 @@ async function main(): Promise<void> {
       getShippingOptions({ aeProductId: "1000000001", quantity: 10_000 }),
     ),
   );
+  check(
+    "اسم المحافظة ورمزها لا يُرسلان معًا إلى مزوّد الشحن",
+    await rejectsAsLocalInput(() =>
+      getShippingOptions({
+        aeProductId: "1000000001",
+        quantity: 1,
+        province: "الرياض",
+        provinceCode: "SA-01",
+      }),
+    ),
+  );
+  check(
+    "وجهة شحن فارغة تُرفض محليًا قبل الشبكة",
+    await rejectsAsLocalInput(() =>
+      getShippingOptions({
+        aeProductId: "1000000001",
+        quantity: 1,
+        province: "   ",
+      }),
+    ),
+  );
 
   const clamped = await searchProducts({ page: -10, pageSize: 10_000 });
   check("دالة البحث نفسها تقيّد الصفحة والحجم", clamped.page === 1 && clamped.pageSize === 100);
