@@ -198,6 +198,39 @@ async function main() {
   });
   check("العنوان صالح ومطبّع", address.phone === "512345678" && address.nationalAddress === "RRDA2929");
 
+  section("بوابة وجهة الشحن");
+  const freightCallsBeforeInvalidAddress = await prisma.aeApiLog.count({
+    where: {
+      apiName: "aliexpress.ds.freight.query",
+      createdAt: { gte: verificationStartedAt },
+    },
+  });
+  let invalidAddressRejected = false;
+  try {
+    await createLocalOrder({
+      cart,
+      // محاكاة متصل داخلي تجاوز نوع TypeScript: يجب أن يرفضه حدّ الطلبية
+      // قبل أن يرسل المحافظة المصطنعة إلى واجهة الشحن.
+      address: {
+        ...address,
+        province: "منطقة غير معتمدة",
+      } as unknown as typeof address,
+    });
+  } catch {
+    invalidAddressRejected = true;
+  }
+  const freightCallsAfterInvalidAddress = await prisma.aeApiLog.count({
+    where: {
+      apiName: "aliexpress.ds.freight.query",
+      createdAt: { gte: verificationStartedAt },
+    },
+  });
+  check("رُفضت محافظة غير معتمدة داخل محرّك الطلبات", invalidAddressRejected);
+  check(
+    "العنوان المرفوض لم يصل إلى واجهة الشحن",
+    freightCallsAfterInvalidAddress === freightCallsBeforeInvalidAddress,
+  );
+
   section("تثبيت الطلبية محليًا");
   const checkoutSecurity = deriveCheckoutSecurity(
     randomBytes(32).toString("base64url"),
@@ -223,6 +256,24 @@ async function main() {
   check(
     "checkout المتزامن يعيد الطلبية نفسها",
     replayed.orderId === created.orderId,
+  );
+  const destinationFreightLogs = await prisma.aeApiLog.findMany({
+    where: {
+      apiName: "aliexpress.ds.freight.query",
+      createdAt: { gte: verificationStartedAt },
+    },
+    select: { requestSummary: true },
+  });
+  const provincePricedLines = destinationFreightLogs.filter((log) => {
+    const summary = JSON.stringify(log.requestSummary ?? {});
+    // قيمة المحافظة PII تشغيلية تحجبها طبقة السجل عمدًا؛ وجود المفتاح
+    // المحجوب يثبت أنها أُرسلت من دون تسريب عنوان العميل إلى السجلات.
+    return summary.includes("province") && summary.includes("«محجوب»");
+  }).length;
+  check(
+    "تسعير التثبيت أرسل المحافظة الموثوقة لكل سطر",
+    provincePricedLines >= cart.length,
+    `${provincePricedLines}/${cart.length}`,
   );
 
   const stored = await prisma.order.findUnique({
@@ -469,6 +520,8 @@ async function main() {
     where: { id: { in: relevantSyncLogs.map((log) => log.id) } },
   });
   await prisma.aeApiLog.deleteMany({ where: { orderId: created.orderId } });
+  await prisma.refundRequest.deleteMany({ where: { orderId: created.orderId } });
+  await prisma.orderJob.deleteMany({ where: { orderId: created.orderId } });
   await prisma.paymentIntent.deleteMany({ where: { orderId: created.orderId } });
   await prisma.order.delete({ where: { id: created.orderId } });
   const gone = await prisma.order.findUnique({ where: { id: created.orderId } });

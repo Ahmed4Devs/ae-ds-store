@@ -74,7 +74,14 @@ export async function cancelOrder(
     ) {
       await prisma.order.updateMany({
         where: { id: order.id },
-        data: { needsManualReview: true },
+        data: {
+          needsManualReview: true,
+          manualReviewCode: "SYSTEM_CANCEL_UNSAFE",
+          manualReviewNote:
+            "طلب المورد الإلغاء لكن حالة الدفع أو التوريد تمنع إلغاءً محليًا آمنًا.",
+          manualReviewOpenedAt: new Date(),
+          manualReviewResolvedAt: null,
+        },
       });
     }
     return { ok: false, reason: "NOT_CANCELLABLE" };

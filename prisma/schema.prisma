@@ -293,22 +293,32 @@ model Order {
   guestAccessHash      String?   @unique
   guestAccessExpiresAt DateTime?
 
-  notes             String?
-  placedAt          DateTime?
+  notes                  String?
+  placedAt               DateTime?
   /// وقت الإلغاء وسببه — تُملأ عند الانتقال إلى CANCELLED
-  cancelledAt       DateTime?
-  cancelReason      String?
+  cancelledAt            DateTime?
+  cancelReason           String?
   /// الطلبية أُنشئت لدى المورّد لكن بلا معرّفات محليّة (REPEATED_ORDER_ERROR)،
   /// فتلزم مطابقة يدوية ولا يجوز إلغاؤها ذاتيًا كأنها لم تُشترَ.
-  needsManualReview Boolean   @default(false)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  needsManualReview      Boolean   @default(false)
+  /// رمز داخلي محدود يوضح سبب فتح المراجعة من دون تخزين حمولة مزوّد خام.
+  manualReviewCode       String?
+  /// ملاحظة تشغيلية مختصرة؛ لا تُعرض للعميل ولا تقبل أسرارًا أو بيانات بطاقة.
+  manualReviewNote       String?
+  manualReviewOpenedAt   DateTime?
+  manualReviewResolvedAt DateTime?
+  /// يثبت اكتمال استرداد العميل دون خلط الحالة المالية بحالة الشحنة.
+  refundedAt             DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
-  payments PaymentIntent[]
-  items    OrderItem[]
+  payments       PaymentIntent[]
+  refundRequests RefundRequest[]
+  jobs           OrderJob[]
+  items          OrderItem[]
   /// طلبية واحدة لدينا قد تنقسم إلى عدة طلبيات على AliExpress
   /// لأن ds.order.create يعيد order_list كمصفوفة
-  aeOrders AeOrder[]
+  aeOrders       AeOrder[]
 
   @@index([userId])
   @@index([status])
@@ -500,10 +510,117 @@ model PaymentIntent {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  refundRequests RefundRequest[]
+
   @@index([orderId])
   @@index([status])
   @@index([status, expiresAt])
   @@index([status, paidAt])
+}
+
+// ===========================================================================
+//  مهام ما بعد الدفع والاستردادات وسجل الإدارة
+// ===========================================================================
+
+enum OrderJobKind {
+  SOURCE_ORDER
+}
+
+enum OrderJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  DEAD
+}
+
+/// مهمة دائمة لما بعد الدفع. تُنشأ في المعاملة المالية نفسها، لذا لا يمكن
+/// نجاح الدفع ثم ضياع طلب التوريد بسبب سقوط الخادم بين خطوتين.
+model OrderJob {
+  id      String @id @default(cuid())
+  orderId String
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  kind           OrderJobKind   @default(SOURCE_ORDER)
+  status         OrderJobStatus @default(PENDING)
+  dedupeKey      String         @unique
+  attempts       Int            @default(0)
+  maxAttempts    Int            @default(6)
+  nextAttemptAt  DateTime       @default(now())
+  leaseToken     String?
+  leaseExpiresAt DateTime?
+  lastErrorCode  String?
+  lastErrorAt    DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([orderId, kind])
+  @@index([status, nextAttemptAt])
+  @@index([orderId, status])
+  @@index([leaseExpiresAt])
+}
+
+enum RefundStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REQUIRES_REVIEW
+}
+
+/// طلب استرداد كامل واحد. صف مستقل يحفظ الخمول وحالة الغموض عند انقطاع
+/// الشبكة؛ لا يجوز استنتاج الاسترداد من تغيير حالة الطلبية وحدها.
+model RefundRequest {
+  id              String        @id @default(cuid())
+  orderId         String
+  order           Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  paymentIntentId String
+  paymentIntent   PaymentIntent @relation(fields: [paymentIntentId], references: [id], onDelete: Restrict)
+
+  idempotencyKey    String       @unique
+  provider          String
+  providerRefundRef String?      @unique
+  amountSar         Decimal      @db.Decimal(12, 2)
+  currency          String
+  status            RefundStatus @default(PENDING)
+  reason            String
+  providerReason    String       @default("requested_by_customer")
+  requestedByUserId String
+
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(5)
+  nextAttemptAt  DateTime  @default(now())
+  leaseToken     String?
+  leaseExpiresAt DateTime?
+  lastErrorCode  String?
+  lastErrorNote  String?
+  submittedAt    DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([paymentIntentId])
+  @@index([status, nextAttemptAt])
+  @@index([orderId, createdAt])
+  @@index([paymentIntentId, status])
+  @@index([leaseExpiresAt])
+}
+
+/// أثر إداري append-only للأفعال المالية وحل المراجعات. لا يحمل علاقة حذف
+/// بالمستخدم عمدًا حتى يبقى الأثر بعد إغلاق حساب مسؤول.
+model AdminAuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String
+  action      String
+  targetType  String
+  targetId    String
+  reason      String?
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([actorUserId, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([action, createdAt])
 }
 
 // ===========================================================================

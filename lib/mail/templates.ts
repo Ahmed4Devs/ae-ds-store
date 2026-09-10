@@ -410,4 +410,34 @@ export async function sendOrderCancelledMail(orderId: string): Promise<void> {
   }
 }
 
+/** رسالة لا تُرسل إلا بعد تأكيد المزوّد اكتمال full refund. */
+export async function sendOrderRefundedMail(orderId: string): Promise<void> {
+  try {
+    const order = await loadOrderForMail(orderId);
+    if (!order?.user?.email) return;
+
+    const locale = DEFAULT_LOCALE;
+    const t = dictionaries[locale];
+    const subject = fill(t.mail.orderRefundedSubject, {
+      orderNumber: order.orderNumber,
+    });
+    const { html, text } = renderMail({
+      locale,
+      heading: subject,
+      body: [
+        fill(t.mail.greeting, { name: order.user.name }),
+        t.mail.orderRefundedBody,
+      ].join("\n"),
+      ctaLabel: t.mail.orderRefundedCta,
+      ctaUrl: storeUrl(`/orders/${order.orderNumber}`),
+    });
+    await deliver({ to: order.user.email, subject, html, text });
+  } catch (error) {
+    console.error(
+      "[mail] order refunded delivery failed",
+      safeErrorKind(error),
+    );
+  }
+}
+
 export type { MailMessage };

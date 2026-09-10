@@ -27,7 +27,7 @@ function sweep(now: number): void {
 
 /**
  * يضمن ألا تتجاوز الخريطة سقفها. إذا ظلت ممتلئة بعد تنظيف المنتهي نفشل
- * مفتوحًا للمفتاح الجديد ولا نطرد سلّة قائمة: الإخلاء يجعل تدوير مفاتيح
+ * مغلقًا للمفتاح الجديد ولا نطرد سلّة قائمة: الإخلاء يجعل تدوير مفاتيح
  * المهاجم زرًا يمحو حدود زوار آخرين، والبحث الخطي عن ضحية يخلق CPU DoS.
  */
 function hasCapacity(now: number): boolean {
@@ -70,7 +70,12 @@ class MemoryRateLimitStore implements RateLimitStore {
     if (!bucket || now >= bucket.resetAt) {
       const resetAt = now + windowMs;
       if (!hasCapacity(now)) {
-        return { ok: true, retryAfter: 0, remaining: max, resetAt };
+        return {
+          ok: false,
+          retryAfter: Math.max(1, Math.ceil(windowMs / 1000)),
+          remaining: 0,
+          resetAt,
+        };
       }
       const count = Math.min(max, units);
       buckets.set(key, { count, resetAt });

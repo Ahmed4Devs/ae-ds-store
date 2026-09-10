@@ -1,8 +1,12 @@
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
+import {
+  backfillRecoverableSourceJobs,
+  enqueueSourceOrderJob,
+  processSourceOrderJobs,
+} from "@/lib/order-jobs";
 import { safeErrorKind } from "@/lib/safe-log";
 import { DEFAULT_LOCALE, dictionaries, type Locale } from "@/lib/i18n/shared";
-import { onPaymentSucceeded } from "@/lib/orders";
 import { shippingAddressSchema } from "@/lib/ksa";
 import type { PaymentStatus } from "@/lib/generated/prisma/enums";
 import { manualProvider } from "./manual";
@@ -661,7 +665,14 @@ async function requireManualReview(orderId: string, reason: string): Promise<voi
   console.error(`[payments] ${reason} للطلبية ${orderId}.`);
   await prisma.order.updateMany({
     where: { id: orderId },
-    data: { needsManualReview: true },
+    data: {
+      needsManualReview: true,
+      manualReviewCode: sanitizePaymentFailureCode(reason),
+      manualReviewNote:
+        "أوقفت طبقة الدفع المعالجة لأن إثباتًا أو مرجعًا ماليًا لم يجتز التحقق.",
+      manualReviewOpenedAt: new Date(),
+      manualReviewResolvedAt: null,
+    },
   });
 }
 
@@ -749,6 +760,7 @@ export function canTransitionPaymentStatus(
 export async function settleIntent(
   providerRef: string,
   outcome: SettleOutcome,
+  options: { deferPostPayment?: boolean } = {},
 ): Promise<{ applied: boolean }> {
   if (
     !/^[^\u0000-\u001f\u007f-\u009f]{1,160}$/u.test(providerRef)
@@ -799,7 +811,13 @@ export async function settleIntent(
     if (intent.provider !== outcome.provider) {
       await tx.order.update({
         where: { id: intent.orderId },
-        data: { needsManualReview: true },
+        data: {
+          needsManualReview: true,
+          manualReviewCode: "PROVIDER_MISMATCH",
+          manualReviewNote: "مزوّد الإشعار لا يطابق مزوّد نيّة الدفع.",
+          manualReviewOpenedAt: new Date(),
+          manualReviewResolvedAt: null,
+        },
       });
       return {
         applied: false,
@@ -846,7 +864,14 @@ export async function settleIntent(
       });
       await tx.order.update({
         where: { id: intent.orderId },
-        data: { needsManualReview: true },
+        data: {
+          needsManualReview: true,
+          manualReviewCode: reason,
+          manualReviewNote:
+            "المبلغ أو العملة في الإثبات المالي لا يطابقان نيّة الدفع المحلية.",
+          manualReviewOpenedAt: new Date(),
+          manualReviewResolvedAt: null,
+        },
       });
       return {
         applied: false,
@@ -871,7 +896,14 @@ export async function settleIntent(
         });
         await tx.order.update({
           where: { id: intent.orderId },
-          data: { needsManualReview: true },
+          data: {
+            needsManualReview: true,
+            manualReviewCode: "PROVIDER_REVERSAL_REVIEW",
+            manualReviewNote:
+              "وصل انعكاس مالي بعد حالة نهائية؛ يلزم التحقق من لوحة المزوّد.",
+            manualReviewOpenedAt: new Date(),
+            manualReviewResolvedAt: null,
+          },
         });
         return {
           applied: true,
@@ -903,26 +935,56 @@ export async function settleIntent(
           where: { id: intent.orderId },
           data: {
             status: "PAID",
-            ...(paymentNeedsReview ? { needsManualReview: true } : {}),
+            ...(paymentNeedsReview
+              ? {
+                  needsManualReview: true,
+                  manualReviewCode: "PAID_STATE_CONFLICT",
+                  manualReviewNote:
+                    "وصل دفع صحيح لكن دفعة ناجحة أخرى تمنع التوريد الآلي.",
+                  manualReviewOpenedAt: new Date(),
+                  manualReviewResolvedAt: null,
+                }
+              : {}),
           },
         });
       } else if (paymentNeedsReview) {
         await tx.order.update({
           where: { id: intent.orderId },
-          data: { needsManualReview: true },
+          data: {
+            needsManualReview: true,
+            manualReviewCode: "PAID_STATE_CONFLICT",
+            manualReviewNote:
+              "وصل دفع صحيح لكن حالة الطلبية أو دفعة ناجحة أخرى تمنع التوريد الآلي.",
+            manualReviewOpenedAt: new Date(),
+            manualReviewResolvedAt: null,
+          },
         });
       }
     } else if (outcome.status === "REFUNDED") {
       paymentNeedsReview = true;
       await tx.order.update({
         where: { id: intent.orderId },
-        data: { needsManualReview: true },
+        data: {
+          needsManualReview: true,
+          manualReviewCode: "UNEXPECTED_REFUND",
+          manualReviewNote:
+            "وصل تأكيد استرداد خارج طلب الاسترداد المحلي؛ يلزم ربطه والتحقق منه.",
+          manualReviewOpenedAt: new Date(),
+          manualReviewResolvedAt: null,
+        },
       });
     } else if (outcome.requiresManualReview) {
       paymentNeedsReview = true;
       await tx.order.update({
         where: { id: intent.orderId },
-        data: { needsManualReview: true },
+        data: {
+          needsManualReview: true,
+          manualReviewCode: "PAYMENT_PROVIDER_REVIEW",
+          manualReviewNote:
+            "أعاد مزوّد الدفع حالة تتطلب تحققًا بشريًا قبل متابعة الطلبية.",
+          manualReviewOpenedAt: new Date(),
+          manualReviewResolvedAt: null,
+        },
       });
     }
 
@@ -940,6 +1002,13 @@ export async function settleIntent(
       },
     });
 
+    // المهمة الدائمة جزء من معاملة إثبات الدفع نفسها. إذا سقطت النسخة بعد
+    // commit وقبل الاتصال بـ AliExpress ستلتقطها دورة cron لاحقًا؛ وإذا
+    // أعيد webhook فلن تنشأ مهمة ثانية بفضل المفتاح الفريد (orderId, kind).
+    if (shouldProcess) {
+      await enqueueSourceOrderJob(intent.orderId, tx);
+    }
+
     return {
       applied: true,
       shouldProcess,
@@ -954,7 +1023,11 @@ export async function settleIntent(
   }
   if (decision.applied && decision.shouldProcess) {
     // الاتصال بالمورّد خارج المعاملة؛ أقفال المال لا تبقى أثناء الشبكة.
-    await onPaymentSucceeded(located.orderId);
+    // webhook يستطيع تأجيل المحاولة الأولى إلى after() ليقرّ للمزوّد
+    // سريعًا، مع بقاء المهمة في PostgreSQL إن أوقفت المنصة التنفيذ الخلفي.
+    if (!options.deferPostPayment) {
+      await processSourceOrderJobs({ orderId: located.orderId, limit: 1 });
+    }
   }
 
   return { applied: decision.applied };
@@ -970,23 +1043,7 @@ export async function settleIntent(
  * صفوف AeOrder وكتابة markOrderPaid الشرطية.
  */
 export async function recoverStrandedPaidIntents(): Promise<number> {
-  const cutoff = new Date(Date.now() - 5 * 60 * 1000);
-  const stranded = await prisma.paymentIntent.findMany({
-    where: {
-      status: "PAID",
-      paidAt: { lt: cutoff },
-      order: { status: "PAID", needsManualReview: false },
-    },
-    take: 100,
-    select: { orderId: true },
-  });
-
-  let recovered = 0;
-  for (const row of stranded) {
-    await onPaymentSucceeded(row.orderId);
-    recovered++;
-  }
-  return recovered;
+  return backfillRecoverableSourceJobs(25);
 }
 
 /**

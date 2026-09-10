@@ -1,5 +1,6 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { settleIntent } from "@/lib/payments";
+import { processSourceOrderJobs } from "@/lib/order-jobs";
 import { moyasarProvider } from "@/lib/payments/moyasar";
 import { tapProvider } from "@/lib/payments/tap";
 import { rateLimit } from "@/lib/rate-limit";
@@ -107,7 +108,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   try {
-    await settleIntent(event.providerRef, {
+    const settlement = await settleIntent(event.providerRef, {
       status: event.status,
       provider: event.provider,
       failureCode: event.failureCode,
@@ -117,7 +118,22 @@ export async function POST(request: Request): Promise<NextResponse> {
       amountSar: event.amountSar,
       currency: event.currency,
       payload: event.payload,
-    });
+    }, { deferPostPayment: true });
+
+    if (settlement.applied && event.status === "PAID") {
+      // محاولة سريعة بعد الرد، وليست مصدر المتانة: المهمة ثُبّتت مسبقًا في
+      // PostgreSQL وتعيدها cron إن لم تمنح المنصة وقتًا كافيًا لـ after().
+      after(async () => {
+        try {
+          await processSourceOrderJobs({ limit: 5 });
+        } catch (error) {
+          console.error(
+            "[payments] تعذّرت محاولة تشغيل طابور ما بعد الدفع:",
+            safeErrorKind(error),
+          );
+        }
+      });
+    }
   } catch (e) {
     // خطأ عندنا لا عند المزوّد: نعيد 500 كي تعيد البوابة المحاولة، لأن
     // الطلبية مدفوعة فعلًا ويجب أن تُصدَّر.

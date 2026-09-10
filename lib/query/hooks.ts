@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import { apiGet, qs } from "./fetcher";
 import { queryKeys } from "./keys";
 import type {
-  AdminOrderRowDto,
-  AdminStatsDto,
+  AdminOrdersDto,
   OrderTrackingDto,
   ShippingOptionDto,
 } from "./keys";
@@ -88,13 +87,19 @@ export function useOrderTracking(
 
 export function useAdminOrders(
   status: string | undefined,
-  initialData?: { rows: AdminOrderRowDto[]; stats: AdminStatsDto },
+  review: boolean,
+  page: number,
+  initialData?: AdminOrdersDto,
 ) {
   return useQuery({
-    queryKey: queryKeys.adminOrders(status),
+    queryKey: queryKeys.adminOrders(status, review, page),
     queryFn: ({ signal }) =>
-      apiGet<{ rows: AdminOrderRowDto[]; stats: AdminStatsDto }>(
-        `/api/admin/orders${qs({ status })}`,
+      apiGet<AdminOrdersDto>(
+        `/api/admin/orders${qs({
+          status,
+          review: review ? "true" : undefined,
+          page: page > 1 ? page : undefined,
+        })}`,
         { signal },
       ),
     initialData,

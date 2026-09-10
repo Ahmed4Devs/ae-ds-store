@@ -10,11 +10,15 @@ import {
   validateCheckoutUrl,
 } from "./security";
 import {
+  assertFullRefundInput,
   PaymentError,
   secretMatches,
   type CreateIntentInput,
+  type FullRefundInput,
   type PaymentProvider,
+  type ProviderRefund,
   type ProviderIntent,
+  type RetrieveRefundInput,
   type WebhookEvent,
 } from "./types";
 
@@ -60,6 +64,10 @@ const tapReferenceSchema = z
   .object({
     gateway: z.string().max(255).nullish(),
     payment: z.string().max(255).nullish(),
+    transaction: z.string().max(255).nullish(),
+    order: z.string().max(100).nullish(),
+    merchant: z.string().max(255).nullish(),
+    idempotent: z.string().max(100).nullish(),
   })
   .nullish();
 const tapResponseSchema = z
@@ -84,6 +92,7 @@ const tapChargeSchema = z.object({
     created: createdSchema.nullish(),
   }),
   response: tapResponseSchema,
+  metadata: z.record(z.string(), z.string()).optional(),
 });
 const tapRefundSchema = z.object({
   id: z.string().regex(TAP_REFUND_ID),
@@ -95,6 +104,7 @@ const tapRefundSchema = z.object({
   reference: tapReferenceSchema,
   created: createdSchema,
   response: tapResponseSchema,
+  metadata: z.record(z.string(), z.string()).optional(),
 });
 const tapWebhookSchema = z.discriminatedUnion("object", [
   tapChargeSchema,
@@ -209,6 +219,29 @@ export const tapProvider: PaymentProvider = {
     return chargeToEvent(charge, "reconciliation");
   },
 
+  async refund(input: FullRefundInput): Promise<ProviderRefund> {
+    assertFullRefundInput(input);
+    if (!TAP_CHARGE_ID.test(input.providerRef)) {
+      throw new PaymentError("PROVIDER_FAILED", "مرجع عملية Tap غير صالح");
+    }
+
+    const charge = await fetchCharge(input.providerRef);
+    assertRefundableTapCharge(charge, input);
+    return postTapFullRefund(input);
+  },
+
+  async retrieveRefund(input: RetrieveRefundInput): Promise<ProviderRefund> {
+    assertFullRefundInput(input);
+    if (
+      !TAP_CHARGE_ID.test(input.providerRef) ||
+      !TAP_REFUND_ID.test(input.refundRef)
+    ) {
+      throw new PaymentError("PROVIDER_FAILED", "مرجع استرداد Tap غير صالح");
+    }
+    const refund = await fetchTapRefund(input.refundRef);
+    return refundToProviderResult(refund, input, "reconciliation");
+  },
+
   async verifyWebhook(req, rawBody): Promise<WebhookEvent | null> {
     /**
      * ⚠️ توقيع Tap ليس سرًّا ثابتًا بل **HMAC-SHA256 يُحسب لكل إشعار**.
@@ -315,6 +348,234 @@ async function fetchCharge(
     );
   }
   return parsed.data;
+}
+
+function assertRefundableTapCharge(
+  charge: z.infer<typeof tapChargeSchema>,
+  input: FullRefundInput,
+): void {
+  const configCurrency = normalizeCurrency(env().STORE_CURRENCY);
+  if (
+    charge.id !== input.providerRef ||
+    (charge.status !== "CAPTURED" && charge.status !== "PAID") ||
+    charge.currency !== input.currency ||
+    configCurrency !== input.currency ||
+    !sameAmountAtTwoDecimals(charge.amount, input.amountSar) ||
+    charge.reference?.order !== input.orderNumber ||
+    charge.metadata?.order_id !== input.orderId
+  ) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "عملية Tap لا تطابق طلبية مدفوعة قابلة للاسترداد الكامل",
+      { ambiguous: charge.status === "REFUNDED" },
+    );
+  }
+}
+
+async function postTapFullRefund(
+  input: FullRefundInput,
+): Promise<ProviderRefund> {
+  const config = env();
+  const callbackUrl = requireHttpsUrl(
+    new URL("/api/payments/webhook", config.STORE_PUBLIC_URL).toString(),
+  );
+  const amount = Number(input.amountSar.toFixed(2));
+
+  let response: Response;
+  try {
+    response = await fetchPaymentProvider(`${API}/refunds/`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.TAP_SECRET_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        charge_id: input.providerRef,
+        // Tap يطلب amount حتى للاسترداد الكامل؛ يساوي حرفيًا مبلغ النيّة.
+        amount,
+        currency: input.currency,
+        reason: input.reason,
+        description: `Full refund for order ${input.orderNumber}`.slice(0, 250),
+        reference: {
+          transaction: input.idempotencyKey,
+          order: input.orderNumber,
+          idempotent: input.idempotencyKey,
+        },
+        metadata: {
+          order_id: input.orderId,
+          order_number: input.orderNumber,
+          refund_key: input.idempotencyKey,
+          refund_scope: "full",
+        },
+        post: { url: callbackUrl },
+      }),
+      cache: "no-store",
+    });
+  } catch {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "تعذّر الاتصال بـ Tap لتنفيذ الاسترداد",
+      { ambiguous: true },
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await readProviderJson(response);
+  } catch {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "استجابة استرداد Tap غير صالحة",
+      { ambiguous: response.ok },
+    );
+  }
+
+  if (!response.ok) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      `رفض Tap طلب الاسترداد (${response.status})`,
+      { ambiguous: response.status >= 500 || response.status === 409 },
+    );
+  }
+  return parseTapRefundResponse(payload, input, "create");
+}
+
+async function fetchTapRefund(
+  refundRef: string,
+): Promise<z.infer<typeof tapRefundSchema>> {
+  const config = env();
+  let response: Response;
+  try {
+    response = await fetchPaymentProvider(
+      `${API}/refunds/${encodeURIComponent(refundRef)}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${config.TAP_SECRET_KEY}` },
+        cache: "no-store",
+      },
+    );
+  } catch {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "تعذّر التحقق من استرداد Tap",
+      { ambiguous: true },
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await readProviderJson(response);
+  } catch {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "ردّ استرداد Tap غير صالح",
+      { ambiguous: true },
+    );
+  }
+  if (!response.ok) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      `تعذّر جلب استرداد Tap (${response.status})`,
+      { ambiguous: true },
+    );
+  }
+
+  const parsed = tapRefundSchema.safeParse(payload);
+  if (!parsed.success || parsed.data.id !== refundRef) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "بنية استرداد Tap الموثوقة غير متوقعة",
+      { ambiguous: true },
+    );
+  }
+  return parsed.data;
+}
+
+/** محلّل خالص لاستجابة Tap؛ يُصدّر لاختبارات العقود. */
+export function parseTapRefundResponse(
+  payload: unknown,
+  input: FullRefundInput,
+  source: "create" | "reconciliation" = "create",
+): ProviderRefund {
+  assertFullRefundInput(input);
+  const parsed = tapRefundSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "بنية استجابة استرداد Tap غير متوقعة",
+      { ambiguous: true },
+    );
+  }
+  return refundToProviderResult(parsed.data, input, source);
+}
+
+function refundToProviderResult(
+  refund: z.infer<typeof tapRefundSchema>,
+  input: FullRefundInput,
+  source: "create" | "reconciliation",
+): ProviderRefund {
+  const echoedIdempotency = refund.reference?.idempotent;
+  const echoedRefundKey = refund.metadata?.refund_key;
+  if (
+    refund.charge_id !== input.providerRef ||
+    refund.currency !== input.currency ||
+    !sameAmountAtTwoDecimals(refund.amount, input.amountSar) ||
+    (echoedIdempotency != null && echoedIdempotency !== input.idempotencyKey) ||
+    (echoedRefundKey != null && echoedRefundKey !== input.idempotencyKey) ||
+    (refund.metadata?.refund_scope != null &&
+      refund.metadata.refund_scope !== "full") ||
+    (refund.metadata?.order_id != null &&
+      refund.metadata.order_id !== input.orderId) ||
+    (refund.reference?.order != null &&
+      refund.reference.order !== input.orderNumber)
+  ) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "استجابة Tap لا تطابق كامل المبلغ أو العملة أو مراجع الطلبية",
+      { ambiguous: true },
+    );
+  }
+
+  const status = mapRefundStatus(refund.status);
+  if (!status) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "حالة استرداد Tap غير معروفة",
+      { ambiguous: true },
+    );
+  }
+
+  return {
+    provider: "tap",
+    providerRef: input.providerRef,
+    refundRef: refund.id,
+    status:
+      status === "REFUNDED"
+        ? "REFUNDED"
+        : status === "PENDING"
+          ? "PENDING"
+          : "FAILED",
+    amountSar: input.amountSar,
+    currency: input.currency,
+    idempotencyKey: input.idempotencyKey,
+    failureCode:
+      status === "FAILED" ? (refund.response?.code ?? undefined) : undefined,
+    failureMessage:
+      status === "FAILED" ? (refund.response?.message ?? undefined) : undefined,
+    payload: {
+      source,
+      refund: {
+        id: refund.id,
+        chargeId: refund.charge_id,
+        status: refund.status,
+        amount: refund.amount,
+        currency: refund.currency,
+        reference: refund.reference,
+        response: refund.response,
+        created: refund.created,
+      },
+    },
+  };
 }
 
 function chargeToIntent(

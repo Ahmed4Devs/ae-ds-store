@@ -96,10 +96,24 @@ export async function createLocalOrder(
   }
 
   const locale = input.locale ?? DEFAULT_LOCALE;
-  const summary = await buildCartSummary(input.cart, locale);
   // القاموس يُختار من اللغة المُمرَّرة لا من الكوكيز: محرّك الطلبيات
   // يجب أن يعمل خارج نطاق الطلب أيضًا (المهام المجدولة وسكربتات التحقق).
   const t = dictionaries[locale];
+
+  // `CreateOrderInput` حدّ TypeScript فقط، والدالة قد تُستدعى مستقبلًا من
+  // Server Action أو مهمة داخلية جديدة. نعيد التحقق عند حدّ البيانات نفسه
+  // قبل استعمال المحافظة في استعلام الشحن أو تثبيت اللقطة في PostgreSQL.
+  const parsedAddress = shippingAddressSchema.safeParse(input.address);
+  if (!parsedAddress.success) {
+    throw new Error(t.checkout.createFailed);
+  }
+  const address = parsedAddress.data;
+
+  // أجرة وخدمة الشحن تختلفان حسب المنطقة. التقدير العام في صفحة السلة لا
+  // يصلح لتثبيت مبلغ يُدفع؛ هنا نمرّر المحافظة الفعلية بعد اعتماد المخطط.
+  const summary = await buildCartSummary(input.cart, locale, {
+    province: address.province,
+  });
 
   if (summary.lines.length === 0) {
     throw new Error(t.checkout.cartEmpty);
@@ -144,15 +158,15 @@ export async function createLocalOrder(
         const saved = await tx.address.create({
           data: {
             userId: input.userId,
-            fullName: input.address.fullName,
-            phone: input.address.phone,
-            country: input.address.country,
-            province: input.address.province,
-            city: input.address.city,
-            addressLine1: input.address.addressLine1,
-            addressLine2: input.address.addressLine2 || null,
-            postalCode: input.address.postalCode || null,
-            nationalAddr: input.address.nationalAddress || null,
+            fullName: address.fullName,
+            phone: address.phone,
+            country: address.country,
+            province: address.province,
+            city: address.city,
+            addressLine1: address.addressLine1,
+            addressLine2: address.addressLine2 || null,
+            postalCode: address.postalCode || null,
+            nationalAddr: address.nationalAddress || null,
           },
           select: { id: true },
         });
@@ -173,7 +187,7 @@ export async function createLocalOrder(
       userId: input.userId ?? null,
       addressId,
       status: "PENDING_PAYMENT",
-      shippingSnapshot: input.address as object,
+      shippingSnapshot: address as object,
       subtotalSar: summary.subtotalSar,
       shippingSar: summary.shippingSar,
       vatSar: summary.vatSar,
@@ -294,7 +308,14 @@ export async function sourceOrderFromAliExpress(
         aeOrders: { none: {} },
         payments: { none: { status: "PAID" } },
       },
-      data: { needsManualReview: true },
+      data: {
+        needsManualReview: true,
+        manualReviewCode: "PAYMENT_PROOF_MISSING",
+        manualReviewNote:
+          "حالة الطلبية مدفوعة بلا PaymentIntent ناجحة مرتبطة بها.",
+        manualReviewOpenedAt: new Date(),
+        manualReviewResolvedAt: null,
+      },
     });
     return {
       ok: false,
@@ -328,12 +349,99 @@ export async function sourceOrderFromAliExpress(
         aeOrders: { none: {} },
         payments: { some: { status: "PAID" } },
       },
-      data: { needsManualReview: true },
+      data: {
+        needsManualReview: true,
+        manualReviewCode: "INVALID_SOURCING_SNAPSHOT",
+        manualReviewNote:
+          "لقطة العنوان أو مواد الطلبية لا تجتاز حدود التوريد الموثوقة.",
+        manualReviewOpenedAt: new Date(),
+        manualReviewResolvedAt: null,
+      },
     });
     return {
       ok: false,
       errorCode: "INVALID_SOURCING_SNAPSHOT",
       message: "بيانات الشحن أو المواد المثبّتة غير صالحة؛ أوقفنا الشراء للمراجعة.",
+      retryable: false,
+    };
+  }
+
+  // آخر إعادة تسعير/مخزون مباشرة قبل العملية التي تصرف رصيد المتجر. لقطة
+  // checkout وحدها قد تصبح قديمة خلال رحلة العميل إلى بوابة الدفع.
+  const addr = parsedAddress.data;
+  const sourceCart: Cart = order.items.map((item) => ({
+    aeProductId: item.aeProductId,
+    skuAttr: item.skuAttr,
+    quantity: item.quantity,
+    logisticsServiceName: item.logisticsServiceName,
+  }));
+  const liveSummary = await buildCartSummary(sourceCart, DEFAULT_LOCALE, {
+    province: addr.province,
+  });
+  const brokenLines = liveSummary.lines.filter((line) => line.issueCode != null);
+  if (brokenLines.length > 0) {
+    const retryable = brokenLines.every((line) => line.issueRetryable);
+    const code = brokenLines[0].issueCode ?? "SOURCE_REVALIDATION_FAILED";
+    if (!retryable) {
+      await prisma.order.updateMany({
+        where: {
+          id: order.id,
+          aeOrders: { none: {} },
+          payments: { some: { status: "PAID" } },
+        },
+        data: {
+          status: "SOURCING_FAILED",
+          needsManualReview: true,
+          manualReviewCode: `SOURCE_${code}`,
+          manualReviewNote:
+            "تغيّر توفر المنتج أو مسار الشحن بعد الدفع؛ لم يُرسل شراء للمورّد.",
+          manualReviewOpenedAt: new Date(),
+          manualReviewResolvedAt: null,
+        },
+      });
+    }
+    return {
+      ok: false,
+      errorCode: `SOURCE_${code}`,
+      message: retryable
+        ? "تعذّر تحديث بيانات المورد مؤقتًا؛ ستُعاد المحاولة آليًا."
+        : "تغيّر المخزون أو الشحن بعد الدفع؛ أوقفنا الشراء للمراجعة.",
+      retryable,
+    };
+  }
+
+  const storedCostSource =
+    Number(order.costSubtotal) + Number(order.costShipping);
+  const liveCostSource = liveSummary.costSubtotal + liveSummary.costShipping;
+  const allowedCostSource =
+    storedCostSource *
+      (1 + env().AE_MAX_SOURCE_COST_INCREASE_PERCENT / 100) +
+    0.01;
+  if (
+    order.costSourceCurrency !== env().AE_SOURCE_CURRENCY ||
+    !Number.isFinite(liveCostSource) ||
+    liveCostSource > allowedCostSource
+  ) {
+    await prisma.order.updateMany({
+      where: {
+        id: order.id,
+        aeOrders: { none: {} },
+        payments: { some: { status: "PAID" } },
+      },
+      data: {
+        status: "SOURCING_FAILED",
+        needsManualReview: true,
+        manualReviewCode: "SOURCE_COST_INCREASE",
+        manualReviewNote:
+          "تجاوزت تكلفة المصدر الحد المسموح بعد الدفع؛ لم يُرسل شراء للمورّد.",
+        manualReviewOpenedAt: new Date(),
+        manualReviewResolvedAt: null,
+      },
+    });
+    return {
+      ok: false,
+      errorCode: "SOURCE_COST_INCREASE",
+      message: "ارتفعت تكلفة المورد بعد الدفع؛ أوقفنا الشراء للمراجعة.",
       retryable: false,
     };
   }
@@ -386,8 +494,6 @@ export async function sourceOrderFromAliExpress(
       retryable: false,
     };
   }
-
-  const addr = parsedAddress.data;
 
   try {
     const result = await placeOrder({
@@ -497,6 +603,11 @@ export async function sourceOrderFromAliExpress(
           // المورّد فلا يجوز للعميل إلغاؤها ذاتيًا كأنها لم تُشترَ، وهذا
           // العلَم هو ما يمنع ذلك ويستدعي المطابقة اليدوية.
           needsManualReview: true,
+          manualReviewCode: e.code,
+          manualReviewNote:
+            "قد تكون الطلبية أُنشئت لدى المورد لكن معرّفاتها المحلية غير محسومة.",
+          manualReviewOpenedAt: new Date(),
+          manualReviewResolvedAt: null,
         },
       });
       return {

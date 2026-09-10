@@ -114,6 +114,12 @@ const serverSchema = z.object({
   AE_API_LOG_RETENTION_DAYS: decimalString("AE_API_LOG_RETENTION_DAYS")
     .pipe(z.number().int().min(1).max(365))
     .default(30),
+  /** أقصى ارتفاع في تكلفة المصدر بين checkout ولحظة الشراء الآلي. */
+  AE_MAX_SOURCE_COST_INCREASE_PERCENT: decimalString(
+    "AE_MAX_SOURCE_COST_INCREASE_PERCENT",
+  )
+    .pipe(z.number().min(0).max(25))
+    .default(3),
 
   // --- السوق ---
   // محرّك الصرف والعناوين في هذا المشروع مخصوص بـ USD→SAR والسعودية؛
@@ -457,7 +463,12 @@ function loadEnv(): ServerEnv {
     }
   }
 
-  if (isProductionRuntime && env.CRON_SECRET) {
+  if (isProductionRuntime) {
+    if (!env.CRON_SECRET) {
+      throw new Error(
+        "CRON_SECRET مطلوب في الإنتاج لأن طوابير التوريد والاسترداد تعتمد على المهمة المجدولة للاستدراك.",
+      );
+    }
     if (env.CRON_SECRET.length < 32 || looksLikePlaceholder(env.CRON_SECRET)) {
       throw new Error("CRON_SECRET في الإنتاج يجب أن يكون سرًا عشوائيًا بطول 32 محرفًا على الأقل.");
     }

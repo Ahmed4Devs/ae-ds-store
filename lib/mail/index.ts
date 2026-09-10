@@ -23,6 +23,7 @@ export {
   sendEmailVerificationMail,
   sendOrderCancelledMail,
   sendOrderPlacedMail,
+  sendOrderRefundedMail,
   sendOrderShippedMail,
   sendPasswordResetMail,
 } from "@/lib/mail/templates";

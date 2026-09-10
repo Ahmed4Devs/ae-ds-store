@@ -2,7 +2,9 @@ import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { env } from "@/lib/env";
 import { syncActiveOrders } from "@/lib/order-sync";
+import { processSourceOrderJobs } from "@/lib/order-jobs";
 import { expireStaleIntents, recoverStrandedPaidIntents } from "@/lib/payments";
+import { processRefundRequests } from "@/lib/refunds";
 import { purgeExpiredSecurityState } from "@/lib/security-retention";
 
 /**
@@ -71,6 +73,11 @@ async function handle(request: Request): Promise<NextResponse> {
     purgeExpiredSecurityState(),
   ]);
 
+  const [sourceJobs, refundJobs] = await Promise.all([
+    processSourceOrderJobs({ limit: 25 }),
+    processRefundRequests({ limit: 20 }),
+  ]);
+
   return NextResponse.json(
     {
       polled: sync.polled,
@@ -78,6 +85,8 @@ async function handle(request: Request): Promise<NextResponse> {
       errors: sync.errors,
       expiredIntents,
       recoveredIntents,
+      sourceJobs,
+      refundJobs,
       retention,
     },
     { headers: NO_STORE },

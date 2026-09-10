@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requireAdmin } from "@/lib/session";
 import { Card, Badge, Alert } from "@/components/ui";
 import { prisma } from "@/lib/db";
+import { recognizedOrderFinancials } from "@/lib/admin-stats";
 import { env } from "@/lib/env";
 import { formatSar, effectiveFxRate } from "@/lib/pricing";
 import { formatDateAr } from "@/lib/ksa";
@@ -22,17 +23,14 @@ export default async function AdminHome() {
   const [
     totalOrders,
     needsAttention,
-    revenue,
+    financials,
     recentOrders,
     failedCalls,
     fatalCalls,
   ] = await Promise.all([
     prisma.order.count(),
-    prisma.order.count({ where: { status: "SOURCING_FAILED" } }),
-    prisma.order.aggregate({
-      _sum: { totalSar: true, costSubtotal: true, costShipping: true },
-      where: { status: { in: ["SOURCED", "SHIPPED", "DELIVERED"] } },
-    }),
+    prisma.order.count({ where: { needsManualReview: true } }),
+    recognizedOrderFinancials(),
     prisma.order.findMany({
       orderBy: { createdAt: "desc" },
       take: 8,
@@ -49,11 +47,8 @@ export default async function AdminHome() {
     prisma.aeApiLog.count({ where: { success: false, retryable: false } }),
   ]);
 
-  const totalRevenue = Number(revenue._sum.totalSar ?? 0);
-  const totalCostSource =
-    Number(revenue._sum.costSubtotal ?? 0) + Number(revenue._sum.costShipping ?? 0);
-  const totalCostSar = totalCostSource * effectiveFxRate();
-  const grossMargin = totalRevenue - totalCostSar;
+  const totalRevenue = financials.revenueSar;
+  const grossMargin = financials.grossMarginSar;
 
   return (
     <>
@@ -70,7 +65,7 @@ export default async function AdminHome() {
       {needsAttention > 0 && (
         <div className="mb-6">
           <Alert tone="danger" title={fill(t.admin.needsAttention, { n: needsAttention })}>
-            <Link href="/admin/orders?status=SOURCING_FAILED" className="underline">
+            <Link href="/admin/orders?review=true" className="underline">
               {t.admin.needsAttentionBody}
             </Link>
           </Alert>

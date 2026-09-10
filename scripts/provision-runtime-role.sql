@@ -50,6 +50,16 @@ GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO ae_store_app;
 REVOKE EXECUTE ON FUNCTION public.ae_store_safe_image_urls(text[]) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.ae_store_safe_image_urls(text[]) TO ae_store_app;
 
+-- سجل الإدارة append-only في دور التشغيل: التطبيق يستطيع قراءته وإضافة
+-- أحداث جديدة، لكنه لا يستطيع محو الأثر أو إعادة كتابته بعد الحادثة.
+DO $audit_acl$
+BEGIN
+  IF to_regclass('public."AdminAuditLog"') IS NOT NULL THEN
+    REVOKE UPDATE, DELETE, TRUNCATE ON TABLE public."AdminAuditLog" FROM ae_store_app;
+  END IF;
+END
+$audit_acl$;
+
 -- يملكها الدور الذي يشغّل migrations؛ تضمن وصول دور التطبيق إلى الجداول
 -- والتسلسلات التي تنشئها ترحيلات مستقبلية من دون منحه DDL.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public

@@ -1,12 +1,21 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { isAdmin } from "@/lib/session";
-import { effectiveFxRate } from "@/lib/pricing";
-import type { AdminOrderRowDto, AdminStatsDto } from "@/lib/query/keys";
+import { recognizedOrderFinancials } from "@/lib/admin-stats";
+import {
+  ADMIN_ORDERS_MAX_PAGE,
+  ADMIN_ORDERS_PAGE_SIZE,
+  parseAdminOrdersPage,
+} from "@/lib/query/keys";
+import type {
+  AdminOrderRowDto,
+  AdminOrdersDto,
+  AdminStatsDto,
+} from "@/lib/query/keys";
 
 /**
  * قائمة الطلبيات وإحصاءاتها للوحة الإدارة.
- * تُستقصى دوريًا حتى يرصد المشغّل الطلبيات الفاشلة فور حدوثها.
+ * تُستقصى دوريًا حتى يرصد المشغّل طابور المراجعة فور تغيّره.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   // التحقق هنا لا في التخطيط وحده: المسار قابل للاستدعاء مباشرةً
@@ -17,8 +26,12 @@ export async function GET(request: Request): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const keys = [...searchParams.keys()];
   if (
-    keys.some((key) => key !== "status") ||
-    searchParams.getAll("status").length > 1
+    keys.some(
+      (key) => key !== "status" && key !== "review" && key !== "page",
+    ) ||
+    searchParams.getAll("status").length > 1 ||
+    searchParams.getAll("review").length > 1 ||
+    searchParams.getAll("page").length > 1
   ) {
     return NextResponse.json(
       { error: "INVALID_PARAMS" },
@@ -26,6 +39,8 @@ export async function GET(request: Request): Promise<NextResponse> {
     );
   }
   const statusParam = searchParams.get("status");
+  const reviewParam = searchParams.get("review");
+  const page = parseAdminOrdersPage(searchParams.get("page"));
 
   const VALID = [
     "PENDING_PAYMENT",
@@ -38,7 +53,12 @@ export async function GET(request: Request): Promise<NextResponse> {
     "CANCELLED",
   ] as const;
   type Status = (typeof VALID)[number];
-  if (statusParam !== null && !(VALID as readonly string[]).includes(statusParam)) {
+  if (
+    (statusParam !== null &&
+      !(VALID as readonly string[]).includes(statusParam)) ||
+    (reviewParam !== null && reviewParam !== "true") ||
+    page === null
+  ) {
     return NextResponse.json(
       { error: "INVALID_PARAMS" },
       { status: 400, headers: { "Cache-Control": "no-store" } },
@@ -48,31 +68,50 @@ export async function GET(request: Request): Promise<NextResponse> {
     statusParam && (VALID as readonly string[]).includes(statusParam)
       ? (statusParam as Status)
       : undefined;
+  const review = reviewParam === "true";
 
-  const [orders, totalOrders, needsAttention, revenue, failedCalls, fatalCalls] =
-    await Promise.all([
+  const where =
+    status || review
+      ? {
+          ...(status ? { status } : {}),
+          ...(review ? { needsManualReview: true } : {}),
+        }
+      : undefined;
+
+  const [
+    orders,
+    totalFiltered,
+    totalOrders,
+    needsAttention,
+    financials,
+    failedCalls,
+    fatalCalls,
+  ] = await Promise.all([
       prisma.order.findMany({
-        where: status ? { status } : undefined,
-        orderBy: { createdAt: "desc" },
-        take: 100,
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: (page - 1) * ADMIN_ORDERS_PAGE_SIZE,
+        take: ADMIN_ORDERS_PAGE_SIZE,
         select: {
           id: true,
           orderNumber: true,
           status: true,
+          needsManualReview: true,
+          manualReviewCode: true,
+          manualReviewOpenedAt: true,
           totalSar: true,
           costSubtotal: true,
           costShipping: true,
           fxRateUsed: true,
+          refundedAt: true,
           createdAt: true,
           _count: { select: { items: true, aeOrders: true } },
         },
       }),
+      prisma.order.count({ where }),
       prisma.order.count(),
-      prisma.order.count({ where: { status: "SOURCING_FAILED" } }),
-      prisma.order.aggregate({
-        _sum: { totalSar: true, costSubtotal: true, costShipping: true },
-        where: { status: { in: ["SOURCED", "SHIPPED", "DELIVERED"] } },
-      }),
+      prisma.order.count({ where: { needsManualReview: true } }),
+      recognizedOrderFinancials(),
       prisma.aeApiLog.count({ where: { success: false } }),
       prisma.aeApiLog.count({ where: { success: false, retryable: false } }),
     ]);
@@ -85,30 +124,44 @@ export async function GET(request: Request): Promise<NextResponse> {
       id: o.id,
       orderNumber: o.orderNumber,
       status: o.status,
+      needsManualReview: o.needsManualReview,
+      manualReviewCode:
+        o.needsManualReview && o.manualReviewCode
+          ? o.manualReviewCode.slice(0, 100)
+          : null,
+      manualReviewOpenedAt:
+        o.needsManualReview && o.manualReviewOpenedAt
+          ? o.manualReviewOpenedAt.toISOString()
+          : null,
       totalSar: Number(o.totalSar),
       costSar,
-      marginSar: Number(o.totalSar) - costSar,
+      marginSar: (o.refundedAt ? 0 : Number(o.totalSar)) - costSar,
       itemCount: o._count.items,
       aeOrderCount: o._count.aeOrders,
       createdAt: o.createdAt.toISOString(),
     };
   });
 
-  const revenueSar = Number(revenue._sum.totalSar ?? 0);
-  const costSourceTotal =
-    Number(revenue._sum.costSubtotal ?? 0) + Number(revenue._sum.costShipping ?? 0);
-
   const stats: AdminStatsDto = {
     totalOrders,
     needsAttention,
-    revenueSar,
-    grossMarginSar: revenueSar - costSourceTotal * effectiveFxRate(),
+    revenueSar: financials.revenueSar,
+    grossMarginSar: financials.grossMarginSar,
     failedCalls,
     fatalCalls,
   };
 
+  const response: AdminOrdersDto = {
+    rows,
+    stats,
+    totalFiltered,
+    hasNext:
+      page < ADMIN_ORDERS_MAX_PAGE &&
+      page * ADMIN_ORDERS_PAGE_SIZE < totalFiltered,
+  };
+
   return NextResponse.json(
-    { rows, stats },
+    response,
     { headers: { "Cache-Control": "no-store" } },
   );
 }

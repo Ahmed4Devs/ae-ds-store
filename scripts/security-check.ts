@@ -16,6 +16,8 @@ interface DatabasePosture {
   can_create_temporary_tables: boolean;
   owns_database: boolean;
   owns_public_schema: boolean;
+  can_update_admin_audit: boolean;
+  can_delete_admin_audit: boolean;
 }
 
 interface DataPosture {
@@ -31,6 +33,7 @@ interface DataPosture {
   unsafe_product_video_rows: number;
   unsafe_sku_image_rows: number;
   unsafe_order_image_rows: number;
+  unsafe_workflow_rows: number;
 }
 
 interface NameRow {
@@ -69,6 +72,18 @@ async function main(): Promise<void> {
         SELECT 1 FROM pg_namespace n
         WHERE n.nspname = 'public' AND n.nspowner = r.oid
       ) AS owns_public_schema
+      ,COALESCE((
+        SELECT has_table_privilege(current_user, c.oid, 'UPDATE')
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = current_schema() AND c.relname = 'AdminAuditLog'
+      ), true) AS can_update_admin_audit
+      ,COALESCE((
+        SELECT has_table_privilege(current_user, c.oid, 'DELETE')
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = current_schema() AND c.relname = 'AdminAuditLog'
+      ), true) AS can_delete_admin_audit
     FROM pg_roles r
     LEFT JOIN pg_stat_ssl s ON s.pid = pg_backend_pid()
     WHERE r.rolname = current_user
@@ -344,7 +359,31 @@ async function main(): Promise<void> {
           OR "imageSnapshot" LIKE 'data:image/svg+xml,%'
           OR "imageSnapshot" LIKE 'data:image/svg+xml;utf8,%'
         )
-      )) AS unsafe_order_image_rows
+      )) AS unsafe_order_image_rows,
+      (
+        (SELECT count(*) FROM "OrderJob" WHERE
+          "attempts" NOT BETWEEN 0 AND 100
+          OR "maxAttempts" NOT BETWEEN 1 AND 20
+          OR length("dedupeKey") NOT BETWEEN 1 AND 160
+          OR "dedupeKey" ~ '[[:cntrl:]]'
+          OR ("leaseToken" IS NOT NULL AND length("leaseToken") NOT BETWEEN 16 AND 128)
+          OR ("lastErrorCode" IS NOT NULL AND "lastErrorCode" !~ '^[A-Z0-9_:-]{1,100}$'))
+        + (SELECT count(*) FROM "RefundRequest" WHERE
+          "amountSar" <= 0
+          OR "currency" !~ '^[A-Z]{3}$'
+          OR "provider" NOT IN ('manual', 'moyasar', 'tap')
+          OR "providerReason" NOT IN ('duplicate', 'fraudulent', 'requested_by_customer')
+          OR length("reason") NOT BETWEEN 3 AND 500
+          OR "reason" ~ '[[:cntrl:]]'
+          OR "attempts" NOT BETWEEN 0 AND 100
+          OR "maxAttempts" NOT BETWEEN 1 AND 20)
+        + (SELECT count(*) FROM "AdminAuditLog" WHERE
+          length("actorUserId") NOT BETWEEN 1 AND 128
+          OR "action" !~ '^[A-Z0-9_:-]{1,100}$'
+          OR "targetType" !~ '^[A-Z][A-Za-z0-9_]{0,63}$'
+          OR length("targetId") NOT BETWEEN 1 AND 160
+          OR ("reason" IS NOT NULL AND length("reason") NOT BETWEEN 3 AND 500))
+      )::int AS unsafe_workflow_rows
   `;
   const integrity = integrityRows[0];
   if (!integrity) throw new Error("تعذّر قراءة سلامة صفوف PostgreSQL");
@@ -395,6 +434,14 @@ async function main(): Promise<void> {
     "twoFactor_security_bounded",
     "AeToken_singleton_id",
     "AeToken_metadata_bounded",
+    "Order_manual_review_code_bounded",
+    "Order_manual_review_note_bounded",
+    "OrderJob_attempts_valid",
+    "OrderJob_dedupe_key_bounded",
+    "RefundRequest_amount_positive",
+    "RefundRequest_operational_text_bounded",
+    "RefundRequest_provider_reason_known",
+    "AdminAuditLog_fields_bounded",
   ];
   const requiredIndexes = [
     "one_default_address_per_user",
@@ -403,6 +450,9 @@ async function main(): Promise<void> {
     "session_token_key",
     "twoFactor_userId_key",
     "twoFactor_secret_idx",
+    "OrderJob_orderId_kind_key",
+    "RefundRequest_paymentIntentId_key",
+    "AdminAuditLog_targetType_targetId_createdAt_idx",
   ];
   const constraintsPresent = requiredConstraints.every((name) =>
     constraints.has(name),
@@ -423,6 +473,14 @@ async function main(): Promise<void> {
     check("دور التطبيق لا يتجاوز RLS", !posture.bypasses_rls),
     check("دور التطبيق لا يملك قاعدة البيانات", !posture.owns_database),
     check("دور التطبيق لا يملك schema public", !posture.owns_public_schema),
+    check(
+      "سجل الإدارة append-only (لا UPDATE)",
+      !posture.can_update_admin_audit,
+    ),
+    check(
+      "سجل الإدارة append-only (لا DELETE)",
+      !posture.can_delete_admin_audit,
+    ),
     check("دور التطبيق لا ينشئ schemas", !posture.can_create_schemas),
     check(
       "دور التطبيق لا ينشئ كائنات داخل schema public",
@@ -465,6 +523,7 @@ async function main(): Promise<void> {
     check("لقطات صور الطلبات آمنة", integrity.unsafe_order_image_rows === 0),
     check("صفوف الطلبيات ضمن الحدود/الحجر", integrity.unsafe_order_rows === 0),
     check("صفوف المزوّدين والسجل ضمن الحدود", integrity.unsafe_provider_rows === 0),
+    check("صفوف المهام والاسترداد والتدقيق ضمن الحدود", integrity.unsafe_workflow_rows === 0),
     check("قيود CHECK الأمنية الحرجة مثبّتة", constraintsPresent),
     check("فهارس التفرد/التزامن الحرجة مثبّتة", indexesPresent),
     check("دالة فحص مصفوفة الصور مثبّتة", functionRows.length === 1),

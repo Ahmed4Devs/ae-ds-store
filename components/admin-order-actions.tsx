@@ -14,10 +14,12 @@ import { Alert, Button, Field, Textarea } from "@/components/ui";
  */
 export function AdminOrderActions({
   orderId,
+  canCancel,
   settleableIntentId,
   labels,
 }: {
   orderId: string;
+  canCancel: boolean;
   /** نيّة الدفع القابلة للتأكيد يدويًا — null إن لم توجد أو كان المزوّد غير يدوي */
   settleableIntentId: string | null;
   labels: {
@@ -66,14 +68,16 @@ export function AdminOrderActions({
             {pending ? labels.confirmingPayment : labels.confirmPayment}
           </Button>
         )}
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={pending}
-          onClick={() => setOpen((v) => !v)}
-        >
-          {open ? labels.close : labels.cancelCta}
-        </Button>
+        {canCancel && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={pending}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? labels.close : labels.cancelCta}
+          </Button>
+        )}
       </div>
 
       {msg && (
@@ -82,7 +86,7 @@ export function AdminOrderActions({
         </div>
       )}
 
-      {open && (
+      {canCancel && open && (
         <div className="w-full max-w-md rounded-lg border border-(--color-border-app) bg-(--color-surface) p-4 text-start">
           <p className="font-semibold">{labels.cancelTitle}</p>
           <p className="mt-1 text-xs leading-relaxed text-ink-500">

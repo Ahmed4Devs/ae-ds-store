@@ -63,6 +63,16 @@ export interface CartLine {
   availableStock: number;
   /** مشكلة تمنع إتمام الشراء لهذا السطر */
   issue: string | null;
+  /** رمز داخلي ثابت يسمح لمسار التوريد بالتمييز دون تحليل النص المترجم. */
+  issueCode:
+    | "VARIANT_UNAVAILABLE"
+    | "SHIPPING_UNAVAILABLE"
+    | "OUT_OF_STOCK"
+    | "INSUFFICIENT_STOCK"
+    | "UPSTREAM_FAILURE"
+    | null;
+  /** العطل المؤقت يعاد عبر الطابور، أما تغيّر المخزون/الخدمة فيحتاج قرارًا. */
+  issueRetryable: boolean;
 }
 
 export interface CartSummary {
@@ -134,15 +144,20 @@ export async function buildCartSummary(
       const ship = shipping.find((s) => s.code === item.logisticsServiceName);
 
       if (!sku) {
-        line = brokenLine(item, product.title, msg.variantGone);
+        line = brokenLine(item, product.title, msg.variantGone, {
+          issueCode: "VARIANT_UNAVAILABLE",
+        });
       } else if (!ship) {
         // خط الشحن اختفى — يجب على العميل إعادة الاختيار
         line = brokenLine(
           item,
           product.title,
           msg.shippingGone,
-          product.imageUrls[0],
-          sku.variantLabel,
+          {
+            imageUrl: product.imageUrls[0],
+            variantLabel: sku.variantLabel,
+            issueCode: "SHIPPING_UNAVAILABLE",
+          },
         );
       } else {
         const unitPriceSar = retailUnitPriceSar(sku.sourcePrice, {
@@ -150,11 +165,21 @@ export async function buildCartSummary(
           fxRate,
         });
         const shippingSar = toSar(ship.feeSource, fxRate);
+        const availableStock =
+          ship.availableStock == null
+            ? sku.stock
+            : Math.min(sku.stock, ship.availableStock);
         const issue =
-          sku.stock === 0
+          availableStock === 0
             ? msg.outOfStock
-            : sku.stock < item.quantity
-              ? msg.onlyN(sku.stock)
+            : availableStock < item.quantity
+              ? msg.onlyN(availableStock)
+              : null;
+        const issueCode =
+          availableStock === 0
+            ? "OUT_OF_STOCK"
+            : availableStock < item.quantity
+              ? "INSUFFICIENT_STOCK"
               : null;
 
         line = {
@@ -176,8 +201,10 @@ export async function buildCartSummary(
           hasTracking: ship.hasTracking,
           minDeliveryDays: ship.minDays,
           maxDeliveryDays: ship.maxDays,
-          availableStock: sku.stock,
+          availableStock,
           issue,
+          issueCode,
+          issueRetryable: false,
         };
       }
     } catch (e) {
@@ -185,7 +212,12 @@ export async function buildCartSummary(
         e instanceof AeApiError
           ? e.customerMessage
           : msg.refreshFailed;
-      line = brokenLine(item, msg.unavailable, reason);
+      line = brokenLine(item, msg.unavailable, reason, {
+        issueCode: "UPSTREAM_FAILURE",
+        issueRetryable:
+          e instanceof AeApiError &&
+          (e.isRetryable || e.needsRefresh || e.errorClass === "AUTH"),
+      });
     }
 
     lines.push(line);
@@ -259,8 +291,12 @@ function brokenLine(
   item: Cart[number],
   title: string,
   issue: string,
-  imageUrl = "",
-  variantLabel = "",
+  options: {
+    imageUrl?: string;
+    variantLabel?: string;
+    issueCode: Exclude<CartLine["issueCode"], null>;
+    issueRetryable?: boolean;
+  },
 ): CartLine {
   return {
     aeProductId: item.aeProductId,
@@ -268,8 +304,8 @@ function brokenLine(
     quantity: item.quantity,
     logisticsServiceName: item.logisticsServiceName,
     title,
-    imageUrl,
-    variantLabel,
+    imageUrl: options.imageUrl ?? "",
+    variantLabel: options.variantLabel ?? "",
     unitPriceSar: 0,
     linePriceSar: 0,
     unitCostSource: 0,
@@ -283,6 +319,8 @@ function brokenLine(
     maxDeliveryDays: null,
     availableStock: 0,
     issue,
+    issueCode: options.issueCode,
+    issueRetryable: options.issueRetryable ?? false,
   };
 }
 

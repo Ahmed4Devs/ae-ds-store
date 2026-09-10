@@ -5,6 +5,8 @@ import { Alert, Badge, Card } from "@/components/ui";
 import { OrderStatusBadge } from "@/components/order-status";
 import { RetrySourcingButton } from "@/components/retry-sourcing";
 import { AdminOrderActions } from "@/components/admin-order-actions";
+import { AdminRefundAction } from "@/components/admin-refund-action";
+import { AdminReviewActions } from "@/components/admin-review-actions";
 import { prisma } from "@/lib/db";
 import { activeProvider } from "@/lib/payments";
 import { formatSar } from "@/lib/pricing";
@@ -24,6 +26,26 @@ const PAYMENT_TONES: Record<
   EXPIRED: "neutral",
   REFUNDED: "neutral",
 };
+
+const REFUND_TONES: Record<
+  string,
+  "neutral" | "info" | "success" | "warning" | "danger"
+> = {
+  PENDING: "warning",
+  PROCESSING: "info",
+  SUCCEEDED: "success",
+  FAILED: "danger",
+  REQUIRES_REVIEW: "danger",
+};
+
+const RETRYABLE_SOURCE_REVIEWS = new Set([
+  "SOURCE_VARIANT_UNAVAILABLE",
+  "SOURCE_SHIPPING_UNAVAILABLE",
+  "SOURCE_OUT_OF_STOCK",
+  "SOURCE_INSUFFICIENT_STOCK",
+  "SOURCE_COST_INCREASE",
+  "SOURCE_JOB_DEAD",
+]);
 
 export async function generateMetadata() {
   const t = await getDictionary();
@@ -47,6 +69,7 @@ export default async function AdminOrderPage(
       aeOrders: { include: { packages: true } },
       // الأحدث أولًا: محاولة الدفع الأخيرة هي المعنيّة دائمًا
       payments: { orderBy: { createdAt: "desc" } },
+      refundRequests: { orderBy: { createdAt: "desc" } },
     },
   });
 
@@ -55,26 +78,91 @@ export default async function AdminOrderPage(
   const parsedAddress = shippingAddressSchema.safeParse(order.shippingSnapshot);
   if (!parsedAddress.success) notFound();
 
-  const logs = await prisma.aeApiLog.findMany({
-    where: { orderId: order.id },
-    orderBy: { createdAt: "desc" },
-    take: 20,
-  });
+  const [logs, auditLogs] = await Promise.all([
+    prisma.aeApiLog.findMany({
+      where: { orderId: order.id },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+    prisma.adminAuditLog.findMany({
+      where: {
+        OR: [
+          { targetType: "Order", targetId: order.id },
+          ...(order.refundRequests.length > 0
+            ? [
+                {
+                  targetType: "RefundRequest",
+                  targetId: { in: order.refundRequests.map((item) => item.id) },
+                },
+              ]
+            : []),
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      select: {
+        id: true,
+        action: true,
+        actorUserId: true,
+        reason: true,
+        createdAt: true,
+      },
+    }),
+  ]);
 
   const addr = parsedAddress.data;
   const costSar =
     (Number(order.costSubtotal) + Number(order.costShipping)) *
     Number(order.fxRateUsed);
-  const margin = Number(order.totalSar) - costSar;
+  const recognizedRevenue = order.refundedAt ? 0 : Number(order.totalSar);
+  const margin = recognizedRevenue - costSar;
 
   // التأكيد اليدوي يخصّ المزوّد «يدوي» وحده، ولا يُعرض إلا لمحاولة ما زالت
   // مفتوحة — تأكيد محاولة منتهية أو مدفوعة يخلق ازدواج تحصيل.
   const settleableIntent =
-    activeProvider() === "manual"
+    !order.needsManualReview && activeProvider() === "manual"
       ? (order.payments.find(
           (p) => p.status === "REQUIRES_ACTION" || p.status === "PENDING",
         ) ?? null)
       : null;
+  const paidPayments = order.payments.filter((payment) => payment.status === "PAID");
+  const canCancel =
+    !order.needsManualReview && order.status === "PENDING_PAYMENT";
+  const canRefund =
+    !order.needsManualReview &&
+    !order.refundedAt &&
+    order.refundRequests.length === 0 &&
+    paidPayments.length === 1 &&
+    paidPayments[0].provider !== "manual" &&
+    ["PAID", "SOURCING_FAILED", "SOURCED", "SHIPPED", "DELIVERED"].includes(
+      order.status,
+    );
+  const latestRefund = order.refundRequests[0] ?? null;
+  const activeRefund = order.refundRequests.some((refund) =>
+    ["PENDING", "PROCESSING", "REQUIRES_REVIEW"].includes(refund.status),
+  );
+  const canRetryReviewedSourcing =
+    order.needsManualReview &&
+    Boolean(
+      order.manualReviewCode &&
+        RETRYABLE_SOURCE_REVIEWS.has(order.manualReviewCode),
+    );
+  const canAttachSupplier =
+    order.needsManualReview &&
+    order.aeOrders.length === 0 &&
+    paidPayments.length === 1 &&
+    ["PAID", "SOURCING", "SOURCING_FAILED"].includes(order.status);
+  const canReconcileRefund =
+    order.needsManualReview && latestRefund?.status === "REQUIRES_REVIEW";
+  const canResolveReview =
+    order.needsManualReview &&
+    !activeRefund &&
+    paidPayments.length <= 1 &&
+    !(
+      ["PAID", "SOURCING", "SOURCING_FAILED"].includes(order.status) &&
+      order.aeOrders.length === 0
+    ) &&
+    !(order.status === "CANCELLED" && paidPayments.length > 0 && !order.refundedAt);
 
   return (
     <>
@@ -90,26 +178,98 @@ export default async function AdminOrderPage(
         </div>
         <div className="flex items-center gap-3">
           <OrderStatusBadge status={order.status} labels={t.orders.status} />
-          {order.status === "SOURCING_FAILED" && (
+          {order.needsManualReview && (
+            <Badge tone="danger">{t.admin.manualReviewBadge}</Badge>
+          )}
+          {order.status === "SOURCING_FAILED" && !order.needsManualReview && (
             <RetrySourcingButton orderId={order.id} labels={{ retry: t.admin.retrySourcing, retrying: t.admin.retrying }} />
           )}
-          <AdminOrderActions
-            orderId={order.id}
-            settleableIntentId={settleableIntent?.id ?? null}
-            labels={{
-              cancelCta: t.admin.cancelOrderCta,
-              cancelTitle: t.admin.cancelOrderTitle,
-              cancelBody: t.admin.cancelOrderBody,
-              cancelReason: t.admin.cancelOrderReason,
-              cancelConfirm: t.admin.cancelOrderConfirm,
-              cancelling: t.orders.cancelling,
-              close: t.common.cancel,
-              confirmPayment: t.admin.confirmPayment,
-              confirmingPayment: t.admin.confirmingPayment,
-            }}
-          />
+          {!order.needsManualReview && (canCancel || settleableIntent) && (
+            <AdminOrderActions
+              orderId={order.id}
+              canCancel={canCancel}
+              settleableIntentId={settleableIntent?.id ?? null}
+              labels={{
+                cancelCta: t.admin.cancelOrderCta,
+                cancelTitle: t.admin.cancelOrderTitle,
+                cancelBody: t.admin.cancelOrderBody,
+                cancelReason: t.admin.cancelOrderReason,
+                cancelConfirm: t.admin.cancelOrderConfirm,
+                cancelling: t.orders.cancelling,
+                close: t.common.cancel,
+                confirmPayment: t.admin.confirmPayment,
+                confirmingPayment: t.admin.confirmingPayment,
+              }}
+            />
+          )}
+          {canRefund && (
+            <AdminRefundAction
+              orderId={order.id}
+              labels={{
+                refundCta: t.admin.refundCta,
+                refundTitle: t.admin.refundTitle,
+                refundBody: t.admin.refundBody,
+                refundReasonLabel: t.admin.refundReasonLabel,
+                refundProviderReasonLabel: t.admin.refundProviderReasonLabel,
+                refundReasonCustomer: t.admin.refundReasonCustomer,
+                refundReasonDuplicate: t.admin.refundReasonDuplicate,
+                refundReasonFraud: t.admin.refundReasonFraud,
+                refundConfirm: t.admin.refundConfirm,
+                refunding: t.admin.refunding,
+                close: t.common.cancel,
+              }}
+            />
+          )}
         </div>
       </div>
+
+      {order.needsManualReview && (
+        <div className="mb-6">
+          <Alert tone="danger" title={t.admin.manualReviewTitle}>
+            <p>{t.admin.manualReviewBody}</p>
+            {order.manualReviewCode && (
+              <p className="mt-2">
+                {t.admin.reviewCode}: {" "}
+                <code className="font-mono" dir="ltr">
+                  {order.manualReviewCode}
+                </code>
+              </p>
+            )}
+            {order.manualReviewNote && (
+              <p className="mt-1" dir="auto">
+                {t.admin.reviewNote}: {order.manualReviewNote}
+              </p>
+            )}
+            {order.manualReviewOpenedAt && (
+              <p className="mt-1 text-xs">
+                {fill(t.admin.manualReviewOpenedAt, {
+                  date: formatDateAr(order.manualReviewOpenedAt, locale),
+                })}
+              </p>
+            )}
+          </Alert>
+          <div className="mt-3">
+            <AdminReviewActions
+              orderId={order.id}
+              canRetrySourcing={canRetryReviewedSourcing}
+              canAttachSupplier={canAttachSupplier}
+              canReconcileRefund={canReconcileRefund}
+              canResolve={canResolveReview}
+              labels={{
+                reviewActionsTitle: t.admin.reviewActionsTitle,
+                reviewReason: t.admin.reviewReason,
+                reviewRetrySource: t.admin.reviewRetrySource,
+                reviewAttachSupplier: t.admin.reviewAttachSupplier,
+                reviewSupplierIds: t.admin.reviewSupplierIds,
+                reviewReconcileRefund: t.admin.reviewReconcileRefund,
+                reviewRefundRef: t.admin.reviewRefundRef,
+                reviewResolve: t.admin.reviewResolve,
+                reviewWorking: t.admin.reviewWorking,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {order.status === "SOURCING_FAILED" && (
         <div className="mb-6">
@@ -304,6 +464,81 @@ export default async function AdminOrderPage(
             )}
           </Card>
 
+          {/* دفتر الاستردادات */}
+          <Card className="overflow-hidden">
+            <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
+              {t.admin.refundsTitle}
+            </p>
+            {order.refundRequests.length === 0 ? (
+              <p className="p-5 text-sm text-ink-500">{t.admin.noRefunds}</p>
+            ) : (
+              <ul className="divide-y divide-(--color-border-app) text-sm">
+                {order.refundRequests.map((refund) => (
+                  <li key={refund.id} className="space-y-1 p-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Badge tone={REFUND_TONES[refund.status] ?? "neutral"}>
+                        {refund.status}
+                      </Badge>
+                      <span className="nums font-medium">
+                        {formatSar(Number(refund.amountSar), locale)}
+                      </span>
+                      <span className="text-xs text-ink-500">
+                        {refund.provider}
+                      </span>
+                      <span className="text-xs text-ink-500 nums">
+                        {formatDateAr(refund.createdAt, locale)}
+                      </span>
+                    </div>
+                    {refund.providerRefundRef && (
+                      <code className="block break-all font-mono text-xs" dir="ltr">
+                        {refund.providerRefundRef}
+                      </code>
+                    )}
+                    {refund.lastErrorCode && (
+                      <p className="text-xs text-red-600 dark:text-red-400">
+                        <code dir="ltr">{refund.lastErrorCode}</code>
+                        {refund.lastErrorNote ? ` — ${refund.lastErrorNote}` : ""}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
+          {/* أثر الإدارة */}
+          <Card className="overflow-hidden">
+            <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
+              {t.admin.auditTitle}
+            </p>
+            {auditLogs.length === 0 ? (
+              <p className="p-5 text-sm text-ink-500">{t.admin.noAudit}</p>
+            ) : (
+              <ul className="divide-y divide-(--color-border-app) text-sm">
+                {auditLogs.map((entry) => (
+                  <li key={entry.id} className="p-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <code className="font-mono text-xs" dir="ltr">
+                        {entry.action}
+                      </code>
+                      <span className="text-xs text-ink-500" dir="ltr">
+                        {entry.actorUserId}
+                      </span>
+                      <span className="ms-auto text-xs text-ink-500 nums">
+                        {formatDateAr(entry.createdAt, locale)}
+                      </span>
+                    </div>
+                    {entry.reason && (
+                      <p className="mt-1 text-xs text-ink-500" dir="auto">
+                        {t.admin.auditReason}: {entry.reason}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+
           {/* سجل الاستدعاءات */}
           <Card className="overflow-hidden">
             <p className="border-b border-(--color-border-app) px-5 py-3 font-semibold">
@@ -342,7 +577,7 @@ export default async function AdminOrderPage(
           <Card className="p-5">
             <p className="mb-3 font-semibold">{t.admin.profitability}</p>
             <dl className="space-y-2 text-sm">
-              <Row label={t.admin.revenueLabel} value={formatSar(Number(order.totalSar), locale)} />
+              <Row label={t.admin.revenueLabel} value={formatSar(recognizedRevenue, locale)} />
               <Row label={t.admin.costLabel} value={formatSar(costSar, locale)} muted />
               <Row
                 label="الهامش"

@@ -1,5 +1,21 @@
 import type { Locale } from "@/lib/i18n/shared";
 
+export const ADMIN_ORDERS_PAGE_SIZE = 50;
+export const ADMIN_ORDERS_MAX_PAGE = 10_000;
+
+/**
+ * رقم صفحة موجب بصيغة عشرية canonical وحدّ صريح يمنع offsets باهظة.
+ * غياب المعامل يعني الصفحة الأولى، أما 01/1.0/+1 والمساحات فتُرفض.
+ */
+export function parseAdminOrdersPage(
+  value: string | null | undefined,
+): number | null {
+  if (value == null) return 1;
+  if (!/^[1-9]\d{0,4}$/u.test(value)) return null;
+  const page = Number(value);
+  return page <= ADMIN_ORDERS_MAX_PAGE ? page : null;
+}
+
 /**
  * مفاتيح الاستعلامات.
  *
@@ -15,7 +31,14 @@ export const queryKeys = {
   orderTracking: (orderNumber: string) =>
     ["orders", orderNumber, "tracking"] as const,
 
-  adminOrders: (status?: string) => ["admin", "orders", status ?? "all"] as const,
+  adminOrders: (status?: string, review = false, page = 1) =>
+    [
+      "admin",
+      "orders",
+      status ?? "all",
+      review ? "review" : "all",
+      page,
+    ] as const,
 
   adminStats: () => ["admin", "stats"] as const,
 } as const;
@@ -59,6 +82,9 @@ export interface AdminOrderRowDto {
   id: string;
   orderNumber: string;
   status: string;
+  needsManualReview: boolean;
+  manualReviewCode: string | null;
+  manualReviewOpenedAt: string | null;
   totalSar: number;
   costSar: number;
   marginSar: number;
@@ -74,4 +100,11 @@ export interface AdminStatsDto {
   grossMarginSar: number;
   failedCalls: number;
   fatalCalls: number;
+}
+
+export interface AdminOrdersDto {
+  rows: AdminOrderRowDto[];
+  stats: AdminStatsDto;
+  totalFiltered: number;
+  hasNext: boolean;
 }

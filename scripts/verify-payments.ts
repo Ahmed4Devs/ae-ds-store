@@ -22,6 +22,19 @@ import {
   fetchPaymentProvider,
   readProviderJson,
 } from "@/lib/payments/security";
+import { processSourceOrderJobs } from "@/lib/order-jobs";
+import { requestFullRefund } from "@/lib/refunds";
+import { parseMoyasarRefundResponse } from "@/lib/payments/moyasar";
+import { parseTapRefundResponse } from "@/lib/payments/tap";
+import {
+  assertFullRefundInput,
+  type FullRefundInput,
+} from "@/lib/payments/types";
+import {
+  attachReviewedSupplierOrders,
+  reconcileReviewedRefund,
+  retryReviewedSourcing,
+} from "@/lib/manual-review";
 
 /**
  * تحقّق من طبقة الدفع وإلغاء الطلبيات.
@@ -80,7 +93,28 @@ async function makeOrder(): Promise<{ orderId: string; orderNumber: string }> {
 }
 
 async function cleanup(orderId: string): Promise<void> {
+  const refunds = await prisma.refundRequest.findMany({
+    where: { orderId },
+    select: { id: true },
+  });
+  await prisma.adminAuditLog.deleteMany({
+    where: {
+      OR: [
+        { targetType: "Order", targetId: orderId },
+        ...(refunds.length > 0
+          ? [
+              {
+                targetType: "RefundRequest",
+                targetId: { in: refunds.map((item) => item.id) },
+              },
+            ]
+          : []),
+      ],
+    },
+  });
   await prisma.aeApiLog.deleteMany({ where: { orderId } });
+  await prisma.refundRequest.deleteMany({ where: { orderId } });
+  await prisma.orderJob.deleteMany({ where: { orderId } });
   await prisma.paymentIntent.deleteMany({ where: { orderId } });
   await prisma.order.delete({ where: { id: orderId } }).catch(() => undefined);
 }
@@ -200,6 +234,133 @@ async function main() {
   }
   check("عميل الدفع يرفض استجابة ليست JSON", wrongProviderTypeRejected);
 
+  section("عقود الاسترداد الكامل");
+  const refundInput: FullRefundInput = {
+    kind: "full",
+    providerRef: "11111111-1111-4111-8111-111111111111",
+    orderId: "order_verify_refund",
+    orderNumber: "AE-20260909-A1B2C3",
+    amountSar: 10.01,
+    currency: "SAR",
+    idempotencyKey: "refund_full_v1:verify_123",
+    reason: "requested_by_customer",
+  };
+  const commonAmountsAccepted = [0.1, 1.1, 0.29, 2.55, 10.01].every(
+    (amountSar) => {
+      try {
+        assertFullRefundInput({ ...refundInput, amountSar });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  );
+  check(
+    "التحقق يقبل مبالغ الهللات الشائعة بلا خطأ floating-point",
+    commonAmountsAccepted,
+  );
+  let invalidRefundReasonRejected = false;
+  try {
+    assertFullRefundInput({
+      ...refundInput,
+      reason: "<script>" as FullRefundInput["reason"],
+    });
+  } catch {
+    invalidRefundReasonRejected = true;
+  }
+  check("سبب مزوّد غير معروف يُرفض وقت التشغيل", invalidRefundReasonRejected);
+
+  const moyasarPaymentId = "22222222-2222-4222-8222-222222222222";
+  const moyasarRefund = parseMoyasarRefundResponse(
+    {
+      id: moyasarPaymentId,
+      status: "refunded",
+      amount: 1001,
+      refunded: 1001,
+      currency: "SAR",
+      invoice_id: refundInput.providerRef,
+    },
+    refundInput,
+    "create",
+    moyasarPaymentId,
+  );
+  check(
+    "Moyasar لا يعلن النجاح إلا لاسترداد كامل مطابق للفوترة",
+    moyasarRefund.status === "REFUNDED" && moyasarRefund.amountSar === 10.01,
+  );
+  let missingMoyasarInvoiceRejected = false;
+  try {
+    parseMoyasarRefundResponse(
+      {
+        id: moyasarPaymentId,
+        status: "refunded",
+        amount: 1001,
+        refunded: 1001,
+        currency: "SAR",
+      },
+      refundInput,
+      "create",
+      moyasarPaymentId,
+    );
+  } catch {
+    missingMoyasarInvoiceRejected = true;
+  }
+  check(
+    "Moyasar يرفض دفعة بلا invoice_id مطابق",
+    missingMoyasarInvoiceRejected,
+  );
+
+  const tapInput: FullRefundInput = {
+    ...refundInput,
+    providerRef: "chg_verify_12345",
+  };
+  const tapRefund = parseTapRefundResponse(
+    {
+      id: "re_verify_12345",
+      object: "refund",
+      charge_id: tapInput.providerRef,
+      status: "REFUNDED",
+      amount: tapInput.amountSar,
+      currency: "SAR",
+      reference: {
+        order: tapInput.orderNumber,
+        idempotent: tapInput.idempotencyKey,
+      },
+      metadata: {
+        order_id: tapInput.orderId,
+        refund_key: tapInput.idempotencyKey,
+        refund_scope: "full",
+      },
+      created: 1,
+      response: null,
+    },
+    tapInput,
+  );
+  check(
+    "Tap يربط الاسترداد بالشحنة والمبلغ ومفتاح الخمول",
+    tapRefund.status === "REFUNDED" && tapRefund.refundRef === "re_verify_12345",
+  );
+  let mismatchedTapRefundRejected = false;
+  try {
+    parseTapRefundResponse(
+      {
+        id: "re_verify_99999",
+        object: "refund",
+        charge_id: "chg_other_12345",
+        status: "REFUNDED",
+        amount: tapInput.amountSar,
+        currency: "SAR",
+        reference: { idempotent: tapInput.idempotencyKey },
+        created: 1,
+        response: null,
+      },
+      tapInput,
+    );
+  } catch {
+    mismatchedTapRefundRejected = true;
+  }
+  check("Tap يرفض استردادًا مربوطًا بعملية أخرى", mismatchedTapRefundRejected);
+
   section("الخنق الموزّع قبل مصالحة بوابة الدفع");
   const limiterKey = `verify:payment-rate:${randomUUID()}`;
   try {
@@ -243,6 +404,40 @@ async function main() {
   const stillEmpty = await prisma.aeOrder.count({ where: { orderId: a.orderId } });
   check("لم تُنشأ أي طلبية لدى المنصة", stillEmpty === 0);
 
+  section("إعادة التحقق قبل صرف رصيد المورد");
+  const repriced = await makeOrder();
+  await attachPaidProof(repriced.orderId, "source-cost-gate");
+  await markOrderPaid(repriced.orderId);
+  // نحاكي تغيرًا كبيرًا بين لقطة checkout والشراء بتخفيض اللقطة فقط؛
+  // بيانات المورد الوهمية تبقى حية وأعلى من الحد.
+  await prisma.order.update({
+    where: { id: repriced.orderId },
+    data: { costSubtotal: 0.01, costShipping: 0 },
+  });
+  const repricedOutcome = await sourceOrderFromAliExpress(repriced.orderId);
+  const repricedAfter = await prisma.order.findUniqueOrThrow({
+    where: { id: repriced.orderId },
+    select: {
+      status: true,
+      needsManualReview: true,
+      manualReviewCode: true,
+      aeOrders: { select: { id: true } },
+    },
+  });
+  check(
+    "ارتفاع تكلفة المصدر بعد الدفع أوقف الشراء",
+    !repricedOutcome.ok &&
+      repricedOutcome.errorCode === "SOURCE_COST_INCREASE" &&
+      repricedAfter.aeOrders.length === 0,
+  );
+  check(
+    "فُتحت مراجعة بسبب محدد بدل فشل مبهم",
+    repricedAfter.status === "SOURCING_FAILED" &&
+      repricedAfter.needsManualReview &&
+      repricedAfter.manualReviewCode === "SOURCE_COST_INCREASE",
+  );
+  await cleanup(repriced.orderId);
+
   section("نيّة الدفع");
   const intent = await createPaymentIntent(a.orderId);
   check("أُنشئت نيّة دفع", Boolean(intent.intentId));
@@ -284,7 +479,71 @@ async function main() {
     `${aeCount} ← ${aeCountAfter}`,
   );
 
+  const sourceJobsAfterDuplicate = await prisma.orderJob.count({
+    where: { orderId: a.orderId },
+  });
+  check(
+    "إشعار الدفع المكرر لم ينشئ مهمة ما بعد دفع ثانية",
+    sourceJobsAfterDuplicate === 1,
+    String(sourceJobsAfterDuplicate),
+  );
+
   await cleanup(a.orderId);
+
+  section("مهمة ما بعد الدفع الدائمة");
+  const durable = await makeOrder();
+  const durableIntent = await createPaymentIntent(durable.orderId);
+  const durableProof = await prisma.paymentIntent.findUniqueOrThrow({
+    where: { id: durableIntent.intentId },
+    select: { amountSar: true, currency: true },
+  });
+  const deferred = await settleIntent(
+    durableIntent.providerRef,
+    {
+      status: "PAID",
+      provider: "manual",
+      amountSar: Number(durableProof.amountSar),
+      currency: durableProof.currency,
+      payload: { source: "durable-job-verification" },
+    },
+    { deferPostPayment: true },
+  );
+  const beforeWorker = await prisma.order.findUniqueOrThrow({
+    where: { id: durable.orderId },
+    select: {
+      status: true,
+      aeOrders: { select: { id: true } },
+      jobs: { select: { status: true } },
+    },
+  });
+  check(
+    "إثبات الدفع يثبت المهمة في المعاملة قبل الاتصال بالمورد",
+    deferred.applied &&
+      beforeWorker.status === "PAID" &&
+      beforeWorker.aeOrders.length === 0 &&
+      beforeWorker.jobs.length === 1 &&
+      beforeWorker.jobs[0].status === "PENDING",
+  );
+  const durableRun = await processSourceOrderJobs({
+    orderId: durable.orderId,
+    limit: 1,
+  });
+  const afterWorker = await prisma.order.findUniqueOrThrow({
+    where: { id: durable.orderId },
+    select: {
+      status: true,
+      aeOrders: { select: { id: true } },
+      jobs: { select: { status: true } },
+    },
+  });
+  check(
+    "العامل أكمل التوريد وأغلق المهمة",
+    durableRun.completed === 1 &&
+      afterWorker.status === "SOURCED" &&
+      afterWorker.aeOrders.length > 0 &&
+      afterWorker.jobs[0]?.status === "COMPLETED",
+  );
+  await cleanup(durable.orderId);
 
   // ================================================================
   section("الدفع المتأخّر لا يُحيي طلبية ملغاة");
@@ -597,6 +856,164 @@ async function main() {
   check("صارت حالة النيّة REFUNDED",
     (await getLatestIntent(g.orderId))?.status === "REFUNDED");
   await cleanup(g.orderId);
+
+  section("دفتر الاسترداد يمنع السباق والتكرار");
+  const ledger = await makeOrder();
+  const ledgerOrder = await prisma.order.findUniqueOrThrow({
+    where: { id: ledger.orderId },
+    select: { totalSar: true },
+  });
+  await prisma.paymentIntent.create({
+    data: {
+      orderId: ledger.orderId,
+      provider: "tap",
+      providerRef: `chg_verify_${randomUUID().replaceAll("-", "_")}`,
+      status: "PAID",
+      amountSar: ledgerOrder.totalSar,
+      currency: "SAR",
+      paidAt: new Date(),
+    },
+  });
+  await markOrderPaid(ledger.orderId);
+  const refundRequestInput = {
+    orderId: ledger.orderId,
+    actorUserId: "verify_admin",
+    reason: "طلب العميل الاسترداد في اختبار الخمول",
+    providerReason: "requested_by_customer" as const,
+  };
+  const [ledgerA, ledgerB] = await Promise.all([
+    requestFullRefund(refundRequestInput),
+    requestFullRefund(refundRequestInput),
+  ]);
+  const ledgerRows = await prisma.refundRequest.findMany({
+    where: { orderId: ledger.orderId },
+  });
+  const ledgerIds = [ledgerA, ledgerB]
+    .filter((value) => value.ok)
+    .map((value) => (value.ok ? value.refundId : ""));
+  check(
+    "طلبا الاسترداد المتزامنان أعادا السجل نفسه",
+    ledgerIds.length === 2 && new Set(ledgerIds).size === 1,
+  );
+  check(
+    "قيد الدفعة أنشأ RefundRequest واحدة فقط",
+    ledgerRows.length === 1 &&
+      Number(ledgerA.ok && ledgerA.created) + Number(ledgerB.ok && ledgerB.created) === 1,
+  );
+  const ledgerReview = await prisma.order.findUniqueOrThrow({
+    where: { id: ledger.orderId },
+    select: { needsManualReview: true, manualReviewCode: true },
+  });
+  check(
+    "طلب الاسترداد أوقف التوريد وفتح مراجعة محددة",
+    ledgerReview.needsManualReview &&
+      ledgerReview.manualReviewCode === "REFUND_IN_PROGRESS",
+  );
+  const ledgerRefundId = ledgerRows[0].id;
+  await prisma.refundRequest.update({
+    where: { id: ledgerRefundId },
+    data: { status: "REQUIRES_REVIEW" },
+  });
+  const reconciliationFixtureRef = `re_verify_${randomUUID().replaceAll("-", "_")}`;
+  const reconciledLedger = await reconcileReviewedRefund({
+    orderId: ledger.orderId,
+    actorUserId: "verify_admin",
+    reason: "تم التحقق من المرجع في لوحة Tap",
+    providerRefundRef: reconciliationFixtureRef,
+  });
+  const reconciledRow = await prisma.refundRequest.findUniqueOrThrow({
+    where: { id: ledgerRefundId },
+    select: { status: true, providerRefundRef: true },
+  });
+  check(
+    "المراجعة لا تعيد POST ماليًا بل تربط مرجعًا للمصالحة فقط",
+    reconciledLedger.ok &&
+      reconciledRow.status === "PENDING" &&
+      reconciledRow.providerRefundRef === reconciliationFixtureRef,
+  );
+  await cleanup(ledger.orderId);
+
+  section("حل مراجعة التوريد بأفعال مدققة");
+  const reviewedRetry = await makeOrder();
+  await attachPaidProof(reviewedRetry.orderId, "reviewed-retry");
+  await markOrderPaid(reviewedRetry.orderId);
+  await prisma.order.update({
+    where: { id: reviewedRetry.orderId },
+    data: {
+      status: "SOURCING_FAILED",
+      needsManualReview: true,
+      manualReviewCode: "SOURCE_COST_INCREASE",
+      manualReviewNote: "fixture",
+      manualReviewOpenedAt: new Date(),
+    },
+  });
+  const approvedRetry = await retryReviewedSourcing({
+    orderId: reviewedRetry.orderId,
+    actorUserId: "verify_admin",
+    reason: "راجعت التكلفة الجديدة ووافقت على إعادة المحاولة",
+  });
+  const retryState = await prisma.order.findUniqueOrThrow({
+    where: { id: reviewedRetry.orderId },
+    select: {
+      status: true,
+      needsManualReview: true,
+      jobs: { select: { status: true } },
+    },
+  });
+  check(
+    "اعتماد المسؤول يفتح مهمة واحدة ويغلق علم المراجعة",
+    approvedRetry.ok &&
+      retryState.status === "PAID" &&
+      !retryState.needsManualReview &&
+      retryState.jobs[0]?.status === "PENDING",
+  );
+  check(
+    "إعادة التوريد المعتمدة تعمل عبر العامل الدائم",
+    (await processSourceOrderJobs({
+      orderId: reviewedRetry.orderId,
+      limit: 1,
+    })).completed === 1,
+  );
+  await cleanup(reviewedRetry.orderId);
+
+  const reviewedAttach = await makeOrder();
+  await attachPaidProof(reviewedAttach.orderId, "reviewed-attach");
+  await markOrderPaid(reviewedAttach.orderId);
+  await prisma.order.update({
+    where: { id: reviewedAttach.orderId },
+    data: {
+      status: "SOURCING_FAILED",
+      needsManualReview: true,
+      manualReviewCode: "REPEATED_ORDER_ERROR",
+      manualReviewNote: "fixture",
+      manualReviewOpenedAt: new Date(),
+    },
+  });
+  const supplierFixtureBase = `${Date.now()}`;
+  const attached = await attachReviewedSupplierOrders({
+    orderId: reviewedAttach.orderId,
+    actorUserId: "verify_admin",
+    reason: "طابقت الطلبية يدويًا في لوحة المورد",
+    aeOrderIds: [`${supplierFixtureBase}1`, `${supplierFixtureBase}2`],
+  });
+  const attachState = await prisma.order.findUniqueOrThrow({
+    where: { id: reviewedAttach.orderId },
+    select: {
+      status: true,
+      needsManualReview: true,
+      aeOrders: { select: { aeOrderId: true } },
+      jobs: { select: { status: true } },
+    },
+  });
+  check(
+    "ربط معرّفات المورد يحل الحالة دون إعادة شراء",
+    attached.ok &&
+      attachState.status === "SOURCED" &&
+      !attachState.needsManualReview &&
+      attachState.aeOrders.length === 2 &&
+      attachState.jobs[0]?.status === "COMPLETED",
+  );
+  await cleanup(reviewedAttach.orderId);
 
   console.log(`\n${"═".repeat(62)}`);
   console.log(`  نجح: ${passed}   |   فشل: ${failed}`);

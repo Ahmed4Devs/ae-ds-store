@@ -12,11 +12,15 @@ import {
   validateCheckoutUrl,
 } from "./security";
 import {
+  assertFullRefundInput,
   PaymentError,
   secretMatches,
   type CreateIntentInput,
+  type FullRefundInput,
   type PaymentProvider,
+  type ProviderRefund,
   type ProviderIntent,
+  type RetrieveRefundInput,
   type WebhookEvent,
 } from "./types";
 
@@ -69,6 +73,8 @@ const invoicePaymentSchema = z.object({
   amount: amountMinorSchema,
   currency: currencySchema,
   refunded: refundedMinorSchema,
+  captured: refundedMinorSchema.optional(),
+  invoice_id: z.string().regex(MOYASAR_ID).nullish(),
 });
 const invoiceSchema = z.object({
   id: z.string().regex(MOYASAR_ID),
@@ -234,6 +240,32 @@ export const moyasarProvider: PaymentProvider = {
     if (!MOYASAR_ID.test(providerRef)) return null;
     const invoice = await fetchInvoice(providerRef);
     return invoiceToEvent(invoice, "reconciliation");
+  },
+
+  async refund(input: FullRefundInput): Promise<ProviderRefund> {
+    assertFullRefundInput(input);
+    if (!MOYASAR_ID.test(input.providerRef)) {
+      throw new PaymentError("PROVIDER_FAILED", "مرجع فاتورة Moyasar غير صالح");
+    }
+
+    const invoice = await fetchInvoice(input.providerRef);
+    const payment = selectFullRefundPayment(invoice, input);
+    const existing = paymentToRefund(payment, input, "preflight", payment.id);
+    if (existing.status === "REFUNDED") return existing;
+
+    return postFullRefund(payment.id, input);
+  },
+
+  async retrieveRefund(input: RetrieveRefundInput): Promise<ProviderRefund> {
+    assertFullRefundInput(input);
+    if (
+      !MOYASAR_ID.test(input.providerRef) ||
+      !MOYASAR_ID.test(input.refundRef)
+    ) {
+      throw new PaymentError("PROVIDER_FAILED", "مرجع استرداد Moyasar غير صالح");
+    }
+    const payment = await fetchPayment(input.refundRef);
+    return paymentToRefund(payment, input, "reconciliation", input.refundRef);
   },
 
   async verifyWebhook(req, rawBody): Promise<WebhookEvent | null> {
@@ -449,6 +481,270 @@ async function fetchInvoice(
     );
   }
   return parsed.data;
+}
+
+function selectFullRefundPayment(
+  invoice: z.infer<typeof invoiceSchema>,
+  input: FullRefundInput,
+): z.infer<typeof invoicePaymentSchema> {
+  const expectedMinor = Math.round(input.amountSar * 100);
+  const matchingReference =
+    invoice.metadata?.order_id === input.orderId &&
+    invoice.metadata?.order_number === input.orderNumber;
+
+  if (
+    invoice.id !== input.providerRef ||
+    invoice.currency !== input.currency ||
+    invoice.amount !== expectedMinor ||
+    !matchingReference
+  ) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "فاتورة Moyasar لا تطابق مرجع الطلبية أو مبلغها أو عملتها",
+      { ambiguous: true },
+    );
+  }
+
+  const candidates = (invoice.payments ?? []).filter((payment) =>
+    ["paid", "captured", "refunded"].includes(payment.status),
+  );
+  if (candidates.length !== 1) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "تعذّر تحديد دفعة Moyasar وحيدة قابلة للاسترداد",
+      { ambiguous: true },
+    );
+  }
+
+  const payment = candidates[0];
+  const chargedMinor =
+    payment.status === "captured"
+      ? payment.captured
+      : payment.amount;
+  if (
+    payment.currency !== input.currency ||
+    chargedMinor !== expectedMinor ||
+    payment.invoice_id !== input.providerRef ||
+    payment.refunded > expectedMinor ||
+    (payment.refunded > 0 && payment.refunded < expectedMinor)
+  ) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "دفعة Moyasar لا تمثل استردادًا كاملًا وآمنًا للطلبية",
+      { ambiguous: true },
+    );
+  }
+  return payment;
+}
+
+async function postFullRefund(
+  paymentId: string,
+  input: FullRefundInput,
+): Promise<ProviderRefund> {
+  const config = env();
+  let response: Response;
+  try {
+    response = await fetchPaymentProvider(
+      `${API}/payments/${encodeURIComponent(paymentId)}/refund`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: basicAuth(config.MOYASAR_SECRET_KEY),
+          Accept: "application/json",
+        },
+        // غياب amount هو full refund وفق توثيق Moyasar؛ لا نرسل body حتى
+        // لا يستطيع تغيير عابر في الوحدة أن يحوّلها إلى partial refund.
+        cache: "no-store",
+      },
+    );
+  } catch {
+    return reconcileMoyasarRefundAfterAmbiguity(paymentId, input);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await readProviderJson(response);
+  } catch {
+    return reconcileMoyasarRefundAfterAmbiguity(paymentId, input);
+  }
+
+  if (!response.ok) {
+    const reconciled = await tryReconcileMoyasarRefund(paymentId, input);
+    if (reconciled?.status === "REFUNDED") return reconciled;
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      `رفض Moyasar طلب الاسترداد (${response.status})`,
+      { ambiguous: response.status >= 500 },
+    );
+  }
+
+  try {
+    return parseMoyasarRefundResponse(payload, input, "create", paymentId);
+  } catch {
+    return reconcileMoyasarRefundAfterAmbiguity(paymentId, input);
+  }
+}
+
+async function fetchPayment(
+  paymentId: string,
+): Promise<z.infer<typeof invoicePaymentSchema>> {
+  const config = env();
+  let response: Response;
+  try {
+    response = await fetchPaymentProvider(
+      `${API}/payments/${encodeURIComponent(paymentId)}`,
+      {
+        method: "GET",
+        headers: { Authorization: basicAuth(config.MOYASAR_SECRET_KEY) },
+        cache: "no-store",
+      },
+    );
+  } catch {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "تعذّر التحقق من استرداد Moyasar",
+      { ambiguous: true },
+    );
+  }
+
+  let payload: unknown;
+  try {
+    payload = await readProviderJson(response);
+  } catch {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "ردّ استرداد Moyasar غير صالح",
+      { ambiguous: true },
+    );
+  }
+  if (!response.ok) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      `تعذّر جلب استرداد Moyasar (${response.status})`,
+      { ambiguous: true },
+    );
+  }
+
+  const parsed = invoicePaymentSchema.safeParse(payload);
+  if (!parsed.success || parsed.data.id !== paymentId) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "بنية استرداد Moyasar الموثوقة غير متوقعة",
+      { ambiguous: true },
+    );
+  }
+  return parsed.data;
+}
+
+async function tryReconcileMoyasarRefund(
+  paymentId: string,
+  input: FullRefundInput,
+): Promise<ProviderRefund | null> {
+  try {
+    const payment = await fetchPayment(paymentId);
+    return paymentToRefund(payment, input, "reconciliation");
+  } catch {
+    return null;
+  }
+}
+
+async function reconcileMoyasarRefundAfterAmbiguity(
+  paymentId: string,
+  input: FullRefundInput,
+): Promise<ProviderRefund> {
+  const reconciled = await tryReconcileMoyasarRefund(paymentId, input);
+  if (reconciled?.status === "REFUNDED") return reconciled;
+  throw new PaymentError(
+    "PROVIDER_FAILED",
+    "تعذّر حسم نتيجة استرداد Moyasar",
+    { ambiguous: true },
+  );
+}
+
+/** محلّل خالص لاستجابة POST refund؛ يُصدّر لاختبارات العقود. */
+export function parseMoyasarRefundResponse(
+  payload: unknown,
+  input: FullRefundInput,
+  source: "create" | "reconciliation" = "create",
+  expectedPaymentId?: string,
+): ProviderRefund {
+  assertFullRefundInput(input);
+  const parsed = invoicePaymentSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "بنية استجابة استرداد Moyasar غير متوقعة",
+      { ambiguous: true },
+    );
+  }
+  return paymentToRefund(parsed.data, input, source, expectedPaymentId);
+}
+
+function paymentToRefund(
+  payment: z.infer<typeof invoicePaymentSchema>,
+  input: FullRefundInput,
+  source: "create" | "preflight" | "reconciliation",
+  expectedPaymentId?: string,
+): ProviderRefund {
+  const expectedMinor = Math.round(input.amountSar * 100);
+  const chargedMinor =
+    payment.status === "captured"
+      ? payment.captured
+      : payment.amount;
+  if (
+    (expectedPaymentId != null && payment.id !== expectedPaymentId) ||
+    payment.currency !== input.currency ||
+    chargedMinor !== expectedMinor ||
+    payment.invoice_id !== input.providerRef ||
+    payment.refunded > expectedMinor ||
+    (payment.refunded > 0 && payment.refunded < expectedMinor)
+  ) {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "استجابة Moyasar لا تطابق كامل المبلغ أو العملة أو الفاتورة",
+      { ambiguous: true },
+    );
+  }
+
+  let status: ProviderRefund["status"];
+  if (payment.status === "refunded" && payment.refunded === expectedMinor) {
+    status = "REFUNDED";
+  } else if (
+    (payment.status === "paid" || payment.status === "captured") &&
+    payment.refunded === 0
+  ) {
+    status = "PENDING";
+  } else if (payment.status === "failed" || payment.status === "voided") {
+    status = "FAILED";
+  } else {
+    throw new PaymentError(
+      "PROVIDER_FAILED",
+      "حالة استرداد Moyasar متناقضة",
+      { ambiguous: true },
+    );
+  }
+
+  return {
+    provider: "moyasar",
+    providerRef: input.providerRef,
+    refundRef: payment.id,
+    status,
+    amountSar: input.amountSar,
+    currency: input.currency,
+    idempotencyKey: input.idempotencyKey,
+    payload: {
+      source,
+      payment: {
+        id: payment.id,
+        invoiceId: payment.invoice_id ?? input.providerRef,
+        status: payment.status,
+        amount: payment.amount,
+        captured: payment.captured,
+        refunded: payment.refunded,
+        currency: payment.currency,
+      },
+    },
+  };
 }
 
 function invoiceToIntent(

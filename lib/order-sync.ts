@@ -278,7 +278,14 @@ export async function syncAeOrder(aeOrderRowId: string): Promise<boolean> {
       if (decision.action === "REVIEW") {
         await tx.order.update({
           where: { id: row.order.id },
-          data: { needsManualReview: true },
+          data: {
+            needsManualReview: true,
+            manualReviewCode: "SUPPLIER_STATE_REVIEW",
+            manualReviewNote:
+              "حالات أجزاء طلبية المورد متعارضة أو تتضمن إلغاءً/استردادًا.",
+            manualReviewOpenedAt: new Date(),
+            manualReviewResolvedAt: null,
+          },
         });
         return true;
       }

@@ -115,7 +115,7 @@ function MenuPanel({
     <div
       role="menu"
       aria-label={label}
-      className="absolute end-0 top-full z-50 mt-2 min-w-[9rem] rounded-xl border border-(--color-border-app) bg-(--color-surface) p-1 shadow-lg"
+      className="absolute inset-e-0 top-full z-50 mt-2 min-w-36 rounded-xl border border-(--color-border-app) bg-(--color-surface) p-1 shadow-lg"
     >
       {children}
     </div>
