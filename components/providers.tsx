@@ -5,7 +5,13 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import type { ReactNode } from "react";
 import { getQueryClient } from "@/lib/query/client";
 
-export function Providers({ children }: { children: ReactNode }) {
+export function Providers({
+  children,
+  styleNonce,
+}: {
+  children: ReactNode;
+  styleNonce?: string;
+}) {
   // لا تُنشأ داخل useState: getQueryClient يتكفّل بنسخة واحدة للمتصفّح
   // ونسخة لكل طلب على الخادم.
   const queryClient = getQueryClient();
@@ -14,7 +20,11 @@ export function Providers({ children }: { children: ReactNode }) {
     <QueryClientProvider client={queryClient}>
       {children}
       {process.env.NODE_ENV === "development" && (
-        <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
+        <ReactQueryDevtools
+          initialIsOpen={false}
+          buttonPosition="bottom-left"
+          styleNonce={styleNonce}
+        />
       )}
     </QueryClientProvider>
   );

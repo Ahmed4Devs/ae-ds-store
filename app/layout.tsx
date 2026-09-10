@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Tajawal } from "next/font/google";
+import { headers } from "next/headers";
 import "./globals.css";
 import { bcp47, dirFor, getDictionary, getLocale } from "@/lib/i18n";
 import { getTheme, THEME_SCRIPT } from "@/lib/theme";
@@ -40,7 +41,14 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  const [locale, theme] = await Promise.all([getLocale(), getTheme()]);
+  const [locale, theme, requestHeaders] = await Promise.all([
+    getLocale(),
+    getTheme(),
+    headers(),
+  ]);
+  // proxy.ts يحذف أي x-nonce يرسله العميل ثم يضع قيمة عشوائية موثوقة.
+  // تحتاجها TanStack Devtools لوسم style الذي تنشئه وقت التشغيل تحت CSP.
+  const styleNonce = requestHeaders.get("x-nonce") ?? undefined;
 
   // عند اختيار "تلقائي" لا يعرف الخادم تفضيل النظام، فنبدأ بالفاتح
   // ويصحّحه سكربت الرأس قبل الرسم.
@@ -59,7 +67,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body className="min-h-full flex flex-col font-sans antialiased">
-        <Providers>{children}</Providers>
+        <Providers styleNonce={styleNonce}>{children}</Providers>
       </body>
     </html>
   );
