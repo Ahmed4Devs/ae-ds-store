@@ -137,6 +137,7 @@ async function main(): Promise<void> {
   const publicOrigin = `http://127.0.0.1:${runtimePort}`;
   const adminPassword = randomBytes(32).toString("base64url");
   const customerPassword = randomBytes(32).toString("base64url");
+  const cronSecret = randomBytes(32).toString("hex");
   const runId = randomUUID();
   const adminEmail = `query-admin-${runId}@ci.example`;
 
@@ -152,6 +153,8 @@ async function main(): Promise<void> {
     MAIL_PROVIDER: "console",
     AE_MODE: "mock",
     PAYMENT_PROVIDER: "manual",
+    CRON_SECRET: cronSecret,
+    VERIFY_CRON_SECRET: cronSecret,
     SEED_CONFIRM:
       `seed:${isolatedUrl.hostname}:${isolatedUrl.port || "5432"}:` +
       `${decodeURIComponent(isolatedUrl.pathname.replace(/^\//u, ""))}:${schema}`,

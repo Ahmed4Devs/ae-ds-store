@@ -236,6 +236,7 @@ export async function syncAeOrder(aeOrderRowId: string): Promise<boolean> {
     const detail = await getOrderDetail(row.aeOrderId);
     let shouldCancel = false;
     let cancelForExpiredPayWindow = false;
+    let becameShipped = false;
 
     const aggregateChanged = await prisma.$transaction(async (tx) => {
       // استقصاء طفلين قد ينتهي في اللحظة نفسها؛ قفل الأب يجعل الجمع يرى
@@ -312,6 +313,7 @@ export async function syncAeOrder(aeOrderRowId: string): Promise<boolean> {
         where: { id: row.order.id },
         data: { status: decision.status },
       });
+      becameShipped = decision.status === "SHIPPED";
       return true;
     });
 
@@ -327,6 +329,13 @@ export async function syncAeOrder(aeOrderRowId: string): Promise<boolean> {
           : `AliExpress: ${detail.orderStatus ?? "CANCELLED"}`,
       });
       changed ||= cancelled.ok;
+    }
+
+    if (becameShipped) {
+      // لا تعتمد رسالة الشحن على الطلب HTTP الحالي؛ القالب يبتلع فشل
+      // النقل حتى لا تتراجع مزامنة صحيحة بسبب عطل البريد.
+      const { sendOrderShippedMail } = await import("@/lib/mail");
+      await sendOrderShippedMail(row.order.id);
     }
   } catch (e) {
     if (!(e instanceof AeApiError)) throw e;

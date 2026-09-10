@@ -244,18 +244,18 @@ npm run verify            # الكل؛ شغّله بمتغيرات قاعدة ا
 # مع خادم يعمل يدويًا:
 npm run verify:query      # 11 فحصًا عامًا + دخول ADMIN اختياري
 # أو دورة HTTP معزولة كاملة تنشئ الخادم وADMIN+TOTP ثم تنظفهما:
-npm run verify:query:isolated # 14 فحصًا بلا تخطٍّ
+npm run verify:query:isolated # 17 فحصًا بلا تخطٍّ
 npm run security:preflight # read-only قبل prisma migrate deploy
 
-npm run verify:migrations # السلسلة كاملة في schema عابر     (13 ترحيلًا)
+npm run verify:migrations # السلسلة كاملة في schema عابر     (15 ترحيلًا)
 npm run verify:boundaries # الكوكيز/JSON/الأحجام والسجل       (25)
 npm run verify:ae         # طبقة التكامل والتوقيع            (27)
 npm run verify:ae-client  # النقل الحي والـ MIME والحجم        (5)
 npm run verify:pricing    # التسعير وقواعد السعودية          (24)
 npm run verify:auth       # حساب وTOTP واسترداد في schema عابر (40)
-npm run verify:orders     # دورة حياة الطلبية                (41)
-npm run verify:payments   # الدفع والإلغاء                   (56)
-npm run verify:store      # الصرف والنشر والتفويض والفاتورة  (26+ حسب البيانات)
+npm run verify:orders     # دورة حياة الطلبية                (44)
+npm run verify:payments   # الدفع والإلغاء والاسترداد        (74)
+npm run verify:store      # الصرف والنشر والتفويض والفاتورة  (28+ حسب البيانات)
 npm run verify:query      # مسارات API؛ 11 عامًا + ADMIN اختياري
 ```
 
@@ -266,7 +266,7 @@ npm run verify:query      # مسارات API؛ 11 عامًا + ADMIN اختيا�
 
 `verify:query:isolated` هو المسار المستخدم في CI: ينشئ schema عابرًا، يطبق
 الترحيلات، يبذر حسابي اختبار عشوائيين، يسجّل TOTP للمسؤول في الذاكرة فقط،
-يشغّل Next على منفذ محلي عشوائي، وينفذ 14 فحص HTTP ثم يوقف شجرة الخادم ويحذف
+يشغّل Next على منفذ محلي عشوائي، وينفذ 17 فحص HTTP ثم يوقف شجرة الخادم ويحذف
 schema في `finally`. يحتاج تأكيدًا مطابقًا لهدف القاعدة حتى لا يُشغّل مصادفةً:
 
 ```bash
@@ -312,7 +312,12 @@ DATABASE_URL="postgresql://.../ae_ds_store" npm run verify:auth
 - [x] **فوترة ZATCA** — المرحلة الأولى: فاتورة مبسّطة قابلة للطباعة مع رمز
       TLV مرمَّز base64 ([`lib/zatca.ts`](lib/zatca.ts))
 - [x] **مهمة مجدولة** — [`/api/cron/sync-orders`](app/api/cron/sync-orders/route.ts)
-      محميّة بـ `CRON_SECRET`، مع [`vercel.json`](vercel.json)
+      محميّة بـ `CRON_SECRET`، مع [`vercel.json`](vercel.json). وهي شبكة
+      الأمان الدائمة للتوريد والاسترداد بعد سقوط نسخة الخادم، لذلك السر
+      والمجدول ومدة تنفيذ تسمح بـ300 ثانية شروط إنتاج لا إضافات اختيارية
+- [x] **استرداد كامل ومدقّق** — سجل دائم يمنع التكرار، ومصالحة منفصلة عن
+      إنشاء العملية، ومراجعة يدوية لا تعيد طلبًا ماليًا مبهمًا. كل قرار
+      إداري حساس محفوظ في سجل append-only لدور التطبيق
 - [x] **سياسات معلنة** — الشحن والإرجاع والخصوصية والشروط في
       [`/policies`](app/policies/), وتنصّ صراحةً على أن نزاعات AliExpress
       تُدار يدويًا لأن فئة `aliexpress.issue.*` للبائعين لا للمشترين
@@ -349,6 +354,8 @@ DATABASE_URL="postgresql://.../ae_ds_store" npm run verify:auth
       سيطلب كلمة مرور عشوائية تفاعليًا. حدّث `DATABASE_URL` إلى `ae_store_app`
       ثم شغّل `npm run security:check` وتأكد أن كل فحوص الصلاحيات تمر
 - [ ] **حساب لدى مزوّد دفع** وضبط `PAYMENT_PROVIDER` ومفاتيحه و`PAYMENT_WEBHOOK_SECRET`
+      ثم تنفيذ اختبار sandbox كامل للدفع والإشعار والاسترداد والمصالحة قبل
+      live؛ اختبارات المستودع لا تستطيع إثبات إعداد حساب المزوّد الخارجي
 - [ ] **رقم ضريبي حقيقي** في `STORE_VAT_NUMBER` — الفاتورة ترفض الصدور بدونه
 - [ ] **مُرسِل بريد حقيقي** (`MAIL_PROVIDER=smtp` أو `resend`) مع
       `AUTH_REQUIRE_EMAIL_VERIFICATION=true`؛ يبقى التأكيد مفروضًا برمجيًا أيضًا
@@ -356,6 +363,10 @@ DATABASE_URL="postgresql://.../ae_ds_store" npm run verify:auth
       واحفظه في مدير أسرار؛ وهو مطلوب تلقائيًا عند `AE_MODE=live`. اترك
       `AE_API_LOG_RETENTION_DAYS=30` أو اخفضه وفق سياسة الخصوصية
 - [ ] **تفويض الحساب كدروبشيبينغ** ثم `AE_TRY_TO_PAY=true`
+- [ ] **تثبيت المجدول والمهلة في منصة الإنتاج** — استدعِ المسار كل عشر
+      دقائق بـBearer يطابق `CRON_SECRET`، وتأكد أن الخطة تسمح بمدة التنفيذ
+      المعلنة (300 ثانية) وأن التنبيهات تراقب مهام `DEAD` وطلبات
+      `REQUIRES_REVIEW`
 - [ ] **بروكسي عكسي** يضبط `X-Forwarded-For` ويُملأ به `TRUSTED_PROXIES`؛
       تشغيل الإنتاج خارج Vercel يفشل عند فراغه، ويجب منع الوصول المباشر إلى
       الأصل. على Vercel اتركه فارغًا ليستخدم التطبيق الترويسة المحمية

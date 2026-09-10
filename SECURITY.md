@@ -21,6 +21,12 @@ dependency checks run on every pull request and weekly against that revision.
 - Use a distributed edge/WAF rate limit when deploying more than one app instance.
 - Run `prisma migrate deploy`, the full CI suite, backups, and a restore drill
   before promoting a release.
+- Configure the authenticated order cron on a platform that honors the route's
+  300-second maximum duration; alert on dead sourcing jobs and refund requests
+  requiring review.
+- Re-run `scripts/provision-runtime-role.sql` after migrations so newly created
+  tables are granted deliberately and `AdminAuditLog` remains append-only for
+  the runtime role, then require a passing `npm run security:check`.
 - Rotate authentication, payment, cron, AliExpress, database, and token-encryption
   secrets immediately after suspected exposure; invalidate affected sessions and
   reconcile payment/provider records before restoring order automation.

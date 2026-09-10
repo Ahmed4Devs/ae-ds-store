@@ -20,6 +20,9 @@ import { purgeExpiredSecurityState } from "@/lib/security-retention";
 
 // المسار يقرأ الترويسات ويكتب في قاعدة البيانات، فلا يجوز أن يُحسَّن ساكنًا.
 export const dynamic = "force-dynamic";
+// أسوأ محاولة توريد قد تعيد تسعير عشرة أسطر ثم تنشئ الطلب لدى المورد.
+// تعلن المهلة للمنصة بدل الاعتماد على افتراضها الافتراضي القصير.
+export const maxDuration = 300;
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -60,22 +63,26 @@ async function handle(request: Request): Promise<NextResponse> {
     );
   }
 
-  const sync = await syncActiveOrders(50);
-
-  // انتهاء نيّات الدفع الراكدة يجري في الدورة نفسها: هي أيضًا مهمة كنس
-  // دورية، وفصلها في مسار ثانٍ يعني سرًّا ثانيًا ومهمة مجدولة ثانية بلا داعٍ.
-  const [expiredIntents, recoveredIntents, retention] = await Promise.all([
+  // تبدأ الأعمال المالية الحرجة مع الاستقصاء، فلا تؤخرها عشرات اتصالات
+  // AliExpress المتسلسلة. الدفعات محافظة لأن الاستدعاء الواحد قد ينتظر
+  // مهلة المزوّد؛ الدورات التالية تلتقط البقية بترتيب FIFO.
+  const [
+    sync,
+    expiredIntents,
+    recoveredIntents,
+    retention,
+    sourceJobs,
+    refundJobs,
+  ] = await Promise.all([
+    syncActiveOrders(3),
     expireStaleIntents(),
     // استدراك الطلبيات المدفوعة العالقة: نيّة سُوّيت PAID لكن سقط الخادم قبل
     // شرائها. المهمة الدورية هي شبكة الأمان التي تُعيد تشغيل ما بعد الدفع.
     recoverStrandedPaidIntents(),
     // جلسات/رموز/قدرات منتهية وسجلات AliExpress الأقدم من سياسة الاحتفاظ.
     purgeExpiredSecurityState(),
-  ]);
-
-  const [sourceJobs, refundJobs] = await Promise.all([
-    processSourceOrderJobs({ limit: 25 }),
-    processRefundRequests({ limit: 20 }),
+    processSourceOrderJobs({ limit: 1 }),
+    processRefundRequests({ limit: 3 }),
   ]);
 
   return NextResponse.json(

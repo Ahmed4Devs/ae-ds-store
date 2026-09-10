@@ -475,7 +475,7 @@ async function completeRefund(
       }),
       tx.order.findUnique({
         where: { id: row.orderId },
-        select: { manualReviewCode: true, cancelledAt: true },
+        select: { status: true, manualReviewCode: true, cancelledAt: true },
       }),
       tx.aeOrder.count({ where: { orderId: row.orderId } }),
     ]);
@@ -514,7 +514,10 @@ async function completeRefund(
     });
 
     const now = new Date();
-    if (supplierOrders === 0) {
+    if (
+      supplierOrders === 0 &&
+      ["PAID", "SOURCING_FAILED"].includes(order.status)
+    ) {
       await tx.order.update({
         where: { id: row.orderId },
         data: {
@@ -529,14 +532,18 @@ async function completeRefund(
         },
       });
     } else {
+      const supplierStateAmbiguous = supplierOrders === 0;
       await tx.order.update({
         where: { id: row.orderId },
         data: {
           refundedAt: now,
           needsManualReview: true,
-          manualReviewCode: "REFUNDED_AFTER_SOURCING",
-          manualReviewNote:
-            "اكتمل استرداد العميل وللطلبية أثر لدى المورد؛ راجع الإلغاء أو الخسارة.",
+          manualReviewCode: supplierStateAmbiguous
+            ? "REFUNDED_SUPPLIER_STATE_AMBIGUOUS"
+            : "REFUNDED_AFTER_SOURCING",
+          manualReviewNote: supplierStateAmbiguous
+            ? "اكتمل الاسترداد لكن حالة الطلبية تدل على تقدم لدى المورد بلا سجل محلي؛ لا تغيّر حالتها قبل المطابقة."
+            : "اكتمل استرداد العميل وللطلبية أثر لدى المورد؛ راجع الإلغاء أو الخسارة.",
           manualReviewOpenedAt: now,
           manualReviewResolvedAt: null,
         },
@@ -556,6 +563,7 @@ async function completeRefund(
           amountSar: Number(row.amountSar),
           currency: row.currency,
           supplierOrders,
+          orderStatusBeforeRefund: order.status,
         },
       },
     });

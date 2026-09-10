@@ -124,6 +124,42 @@ async function main() {
     `HTTP ${missing.status}`,
   );
 
+  const cronSecret = process.env.VERIFY_CRON_SECRET;
+  if (!cronSecret) {
+    skip(
+      "حماية وتشغيل المهمة المجدولة",
+      "اختياري؛ اضبط VERIFY_CRON_SECRET وقت التشغيل فقط",
+    );
+  } else {
+    const wrongSecret = `${cronSecret[0] === "0" ? "1" : "0"}${cronSecret.slice(1)}`;
+    const deniedCron = await fetch(`${BASE}/api/cron/sync-orders`, {
+      headers: { Authorization: `Bearer ${wrongSecret}` },
+    });
+    check(
+      "المهمة المجدولة ترفض Bearer خاطئًا",
+      deniedCron.status === 401,
+      `HTTP ${deniedCron.status}`,
+    );
+
+    const allowedCron = await fetch(`${BASE}/api/cron/sync-orders`, {
+      headers: { Authorization: `Bearer ${cronSecret}` },
+    });
+    check(
+      "المهمة المجدولة تقبل Bearer الصحيح",
+      allowedCron.ok,
+      `HTTP ${allowedCron.status}`,
+    );
+    const cronBody = (await allowedCron.json().catch(() => null)) as {
+      sourceJobs?: { claimed?: unknown };
+      refundJobs?: { claimed?: unknown };
+    } | null;
+    check(
+      "استجابة المهمة تعرض عدادات العاملين الدائمين",
+      typeof cronBody?.sourceJobs?.claimed === "number" &&
+        typeof cronBody?.refundJobs?.claimed === "number",
+    );
+  }
+
   // -------------------------------------------------------------------
   section("دخول المسؤول والوصول المصرّح");
 
