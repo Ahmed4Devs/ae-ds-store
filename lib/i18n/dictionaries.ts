@@ -77,6 +77,11 @@ export const ar = {
     heroSubtitle:
       "أسعار بالريال السعودي شاملة الضريبة، مع بيان صريح لمدة الشحن قبل إتمام الطلب — بلا مفاجآت.",
     heroCta: "ابدأ التسوّق",
+    heroCarouselLabel: "عروض المتجر",
+    goToSlide: "انتقل إلى الشريحة",
+    featuredHeroSubtitle:
+      "من المنتجات الأكثر طلبًا، مع عرض السعر والشحن بوضوح قبل إتمام الطلب.",
+    featuredHeroCta: "عرض المنتج",
     feature1Title: "أسعار شفافة",
     feature1Body:
       "السعر النهائي بالريال شامل ضريبة القيمة المضافة والشحن — يُحتسب قبل الدفع.",
@@ -904,6 +909,11 @@ export const en: Dictionary = {
     heroSubtitle:
       "Prices in Saudi Riyals including VAT, with shipping times stated clearly before you order — no surprises.",
     heroCta: "Start shopping",
+    heroCarouselLabel: "Store offers",
+    goToSlide: "Go to slide",
+    featuredHeroSubtitle:
+      "One of our most ordered products, with pricing and shipping shown clearly before checkout.",
+    featuredHeroCta: "View product",
     feature1Title: "Transparent pricing",
     feature1Body:
       "The final price in SAR includes VAT and shipping — calculated before payment.",

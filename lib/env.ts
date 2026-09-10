@@ -129,6 +129,21 @@ const serverSchema = z.object({
   STORE_COUNTRY: z.literal("SA").default("SA"),
   STORE_LOCALE: z.string().default("ar_SA"),
 
+  // فيديو Hero اختياري من public؛ المسار المحلي يحافظ على media-src 'self'.
+  HERO_VIDEO_PATH: z
+    .string()
+    .trim()
+    .max(256)
+    .refine(
+      (value) =>
+        value === "" ||
+        (/^\/[A-Za-z0-9/_-]+\.(?:mp4|webm)$/u.test(value) &&
+          !value.includes("//") &&
+          !value.includes("..")),
+      "HERO_VIDEO_PATH يجب أن يكون مسار mp4 أو webm محليًا داخل public",
+    )
+    .default(""),
+
   // --- الصرف والتسعير ---
   FX_USD_TO_SAR: decimalString("FX_USD_TO_SAR")
     .pipe(z.number().min(1).max(10))

@@ -3,8 +3,10 @@ import { SiteHeader, SiteFooter } from "@/components/site-header";
 import { ProductGrid } from "@/components/product-card";
 import { browse } from "@/lib/catalog";
 import { getCategories } from "@/lib/aliexpress";
-import { ButtonLink, Card } from "@/components/ui";
+import { Card } from "@/components/ui";
 import { getDictionary, getLocale } from "@/lib/i18n";
+import { HeroCarousel, type HeroSlide } from "@/components/hero-carousel";
+import { env } from "@/lib/env";
 
 export default async function HomePage() {
   const [featured, categories, t, locale] = await Promise.all([
@@ -19,28 +21,47 @@ export default async function HomePage() {
     { t: t.home.feature2Title, d: t.home.feature2Body },
     { t: t.home.feature3Title, d: t.home.feature3Body },
   ];
+  const heroProducts = featured.cards.slice(0, 3);
+  const heroVideoPath = env().HERO_VIDEO_PATH;
+  const heroSlides: HeroSlide[] = [
+    {
+      id: "intro",
+      title: t.home.heroTitle,
+      subtitle: t.home.heroSubtitle,
+      ctaLabel: t.home.heroCta,
+      href: "/search",
+      media: heroVideoPath
+        ? {
+            type: "video",
+            src: heroVideoPath,
+            poster: heroProducts[0]?.imageUrl,
+          }
+        : heroProducts[0]
+          ? { type: "image", src: heroProducts[0].imageUrl }
+          : undefined,
+    },
+    ...heroProducts.slice(heroVideoPath ? 0 : 1).map((product) => ({
+      id: `product-${product.aeProductId}`,
+      title: product.title,
+      subtitle: t.home.featuredHeroSubtitle,
+      ctaLabel: t.home.featuredHeroCta,
+      href: `/product/${product.aeProductId}`,
+      media: { type: "image" as const, src: product.imageUrl },
+    })),
+  ];
 
   return (
     <>
       <SiteHeader />
 
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">
-        <section className="mb-10 overflow-hidden rounded-2xl bg-gradient-to-l from-brand-700 to-brand-500 px-6 py-12 text-white sm:px-12 sm:py-16">
-          <h1 className="max-w-2xl text-3xl font-bold leading-tight sm:text-4xl">
-            {t.home.heroTitle}
-          </h1>
-          <p className="mt-3 max-w-xl leading-relaxed text-brand-50">
-            {t.home.heroSubtitle}
-          </p>
-          <ButtonLink
-            href="/search"
-            variant="secondary"
-            size="lg"
-            className="mt-7 bg-white text-brand-700 hover:bg-brand-50"
-          >
-            {t.home.heroCta}
-          </ButtonLink>
-        </section>
+        <HeroCarousel
+          slides={heroSlides}
+          previousLabel={t.common.previous}
+          nextLabel={t.common.next}
+          carouselLabel={t.home.heroCarouselLabel}
+          goToSlideLabel={t.home.goToSlide}
+        />
 
         <section className="mb-12 grid gap-4 sm:grid-cols-3">
           {features.map((f) => (
