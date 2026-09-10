@@ -1,4 +1,5 @@
 import "dotenv/config";
+import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { env } from "@/lib/env";
 import { prisma } from "@/lib/db";
@@ -92,26 +93,50 @@ async function makeOrder(): Promise<{ orderId: string; orderNumber: string }> {
   return createLocalOrder({ cart, address: ADDRESS });
 }
 
+/**
+ * سجل الإدارة append-only لدور التشغيل عمدًا، فتنظيف أثر الطلبية التجريبية
+ * يمرّ عبر دور الترحيل/المالك. عند غيابه يُترك الأثر مع تحذير صريح بدل
+ * إسقاط التحقق كله.
+ */
+async function purgeAuditRows(
+  orderId: string,
+  refundIds: string[],
+): Promise<void> {
+  const connectionString =
+    process.env.MIGRATION_DATABASE_URL || process.env.DATABASE_URL;
+  if (!connectionString) return;
+  const schema = new URL(connectionString).searchParams.get("schema");
+  const client = new pg.Client({ connectionString });
+  await client.connect();
+  try {
+    if (schema) {
+      await client.query(
+        `SET search_path TO ${client.escapeIdentifier(schema)}, pg_catalog`,
+      );
+    }
+    await client.query(
+      `DELETE FROM "AdminAuditLog"
+       WHERE ("targetType" = 'Order' AND "targetId" = $1)
+          OR ("targetType" = 'RefundRequest' AND "targetId" = ANY($2::text[]))`,
+      [orderId, refundIds],
+    );
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code !== "42501") throw error;
+    console.log(
+      "     تحذير — بقي أثر التدقيق للطلبية التجريبية؛ اضبط MIGRATION_DATABASE_URL لدور المالك لتنظيفه",
+    );
+  } finally {
+    await client.end();
+  }
+}
+
 async function cleanup(orderId: string): Promise<void> {
   const refunds = await prisma.refundRequest.findMany({
     where: { orderId },
     select: { id: true },
   });
-  await prisma.adminAuditLog.deleteMany({
-    where: {
-      OR: [
-        { targetType: "Order", targetId: orderId },
-        ...(refunds.length > 0
-          ? [
-              {
-                targetType: "RefundRequest",
-                targetId: { in: refunds.map((item) => item.id) },
-              },
-            ]
-          : []),
-      ],
-    },
-  });
+  await purgeAuditRows(orderId, refunds.map((item) => item.id));
   await prisma.aeApiLog.deleteMany({ where: { orderId } });
   await prisma.refundRequest.deleteMany({ where: { orderId } });
   await prisma.orderJob.deleteMany({ where: { orderId } });
