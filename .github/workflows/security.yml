@@ -62,7 +62,7 @@ jobs:
         run: npm ci
 
       - name: Audit dependency vulnerabilities
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=low
 
       - name: Apply migrations to an isolated database
         run: npm run db:deploy
@@ -82,5 +82,8 @@ jobs:
       - name: Run HTTP boundary checks against Next.js
         run: npm run verify:query:isolated
 
-      - name: Production build
-        run: npm run build
+      - name: Verify PostgreSQL query plans and pool limits
+        run: npm run verify:db-performance
+
+      - name: Production build and HTTP hardening smoke test
+        run: npm run verify:production

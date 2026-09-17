@@ -2,6 +2,7 @@ import "dotenv/config";
 import { getProduct, getShippingOptions, getTracking, searchProducts } from "@/lib/aliexpress/api";
 import { AeApiError } from "@/lib/aliexpress/errors";
 import {
+  aeCategoryResponseSchema,
   aeTextSearchResponseSchema,
   aeTrackingResponseSchema,
 } from "@/lib/aliexpress/schemas";
@@ -80,6 +81,31 @@ async function main(): Promise<void> {
   check(
     "استجابة البحث لا تقبل مصفوفة منتجات غير محدودة",
     !aeTextSearchResponseSchema.safeParse(oversizedSearch).success,
+  );
+
+  const oversizedCategories = {
+    resp_result: {
+      result: {
+        categories: Array.from({ length: 1_001 }, (_, index) => ({
+          category_id: index,
+          category_name: "category",
+        })),
+      },
+    },
+  };
+  check(
+    "استجابة الفئات لا تقبل مصفوفة غير محدودة",
+    !aeCategoryResponseSchema.safeParse(oversizedCategories).success,
+  );
+  check(
+    "اسم الفئة القادم من المورد محدود الطول",
+    !aeCategoryResponseSchema.safeParse({
+      resp_result: {
+        result: {
+          categories: [{ category_id: 1, category_name: "x".repeat(501) }],
+        },
+      },
+    }).success,
   );
 
   check(

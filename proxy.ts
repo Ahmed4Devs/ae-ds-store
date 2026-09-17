@@ -299,13 +299,25 @@ function captureResetToken(
   const valid = tokens.length === 1 && isResetToken(tokens[0]);
   if (!valid) cleanUrl.searchParams.set("error", "INVALID_TOKEN");
 
-  // Use a relative Location. Reusing req.nextUrl's origin would trust the Host
-  // header and turn a valid reset visit into a host-header open redirect.
+  // NextResponse.redirect في Next.js 16 يتطلب URL مطلقًا. نبنيه من الأصل
+  // المضبوط تشغيليًا لا من req.nextUrl/Host كي لا يتحول رابط الاستعادة إلى
+  // open redirect عند وجود proxy يمرر Host أو X-Forwarded-Host غير موثوق.
+  const configuredPublicUrl = new URL(
+    process.env.STORE_PUBLIC_URL || "http://localhost:3000",
+  );
+  if (
+    !["http:", "https:"].includes(configuredPublicUrl.protocol) ||
+    configuredPublicUrl.username ||
+    configuredPublicUrl.password
+  ) {
+    throw new TypeError("STORE_PUBLIC_URL must be a safe HTTP(S) origin");
+  }
+  const redirectUrl = new URL(
+    `${cleanUrl.pathname}${cleanUrl.search}`,
+    configuredPublicUrl.origin,
+  );
   const response = applyCsp(
-    new NextResponse(null, {
-      status: 303,
-      headers: { Location: `${cleanUrl.pathname}${cleanUrl.search}` },
-    }),
+    NextResponse.redirect(redirectUrl, 303),
     csp,
   );
   response.headers.set("Cache-Control", "private, no-store, max-age=0");

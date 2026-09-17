@@ -349,13 +349,17 @@ export const aeCategoryResponseSchema = z.object({
             .array(
               z.object({
                 category_id: z.union([z.string(), z.number()]),
-                category_name: z.string(),
+                category_name: z.string().max(500),
                 parent_category_id: z
                   .union([z.string(), z.number()])
                   .optional()
                   .nullable(),
               }),
             )
+            // حد مستقل عن سقف جسم HTTP (2MiB): يمنع المورد من تحويل
+            // استجابة صغيرة نسبيًا إلى آلاف الكائنات التي تُرسم روابطها
+            // كلها في الصفحة الرئيسية وتستهلك الذاكرة ووقت React.
+            .max(1_000)
             .default([]),
         })
         .optional()

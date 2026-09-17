@@ -1,8 +1,10 @@
 import "dotenv/config";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
+import { unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import pg from "pg";
 import { safeErrorKind } from "@/lib/safe-log";
 
@@ -140,6 +142,15 @@ async function main(): Promise<void> {
   const cronSecret = randomBytes(32).toString("hex");
   const runId = randomUUID();
   const adminEmail = `query-admin-${runId}@ci.example`;
+  const queryTraceFile = join(tmpdir(), `ae-query-trace-${runId}.jsonl`);
+  const queryTraceHook = resolve("scripts/query-trace-hook.cjs");
+  await writeFile(queryTraceFile, "", { flag: "wx" });
+  const nodeOptions = [
+    process.env.NODE_OPTIONS?.trim(),
+    `--require=${queryTraceHook}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -153,6 +164,8 @@ async function main(): Promise<void> {
     MAIL_PROVIDER: "console",
     AE_MODE: "mock",
     PAYMENT_PROVIDER: "manual",
+    VERIFY_QUERY_TRACE_FILE: queryTraceFile,
+    NODE_OPTIONS: nodeOptions,
     CRON_SECRET: cronSecret,
     VERIFY_CRON_SECRET: cronSecret,
     SEED_CONFIRM:
@@ -237,6 +250,7 @@ async function main(): Promise<void> {
       console.log("isolated HTTP query schema removed");
     }
     await client.end().catch(() => undefined);
+    await unlink(queryTraceFile).catch(() => undefined);
   }
 }
 

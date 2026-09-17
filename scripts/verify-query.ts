@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { readFileSync, writeFileSync } from "node:fs";
 import { safeErrorKind } from "@/lib/safe-log";
 
 /**
@@ -68,9 +69,133 @@ interface ShippingDto {
   estimate: string;
 }
 
+interface QueryTrace {
+  verb: string;
+  targets: string[];
+}
+
+function resetQueryTrace(): boolean {
+  const path = process.env.VERIFY_QUERY_TRACE_FILE;
+  if (!path) return false;
+  writeFileSync(path, "", "utf8");
+  return true;
+}
+
+function readQueryTrace(): QueryTrace[] {
+  const path = process.env.VERIFY_QUERY_TRACE_FILE;
+  if (!path) return [];
+  const body = readFileSync(path, "utf8").trim();
+  if (!body) return [];
+  return body.split("\n").flatMap((line): QueryTrace[] => {
+    try {
+      const parsed = JSON.parse(line) as Partial<QueryTrace>;
+      return typeof parsed.verb === "string" && Array.isArray(parsed.targets)
+        ? [{ verb: parsed.verb, targets: parsed.targets }]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 async function main() {
   console.log("\n=== تحقّق طبقة TanStack Query ===");
   console.log(`الخادم: ${BASE}`);
+
+  // -------------------------------------------------------------------
+  section("الصفحة الرئيسية — الأمان وميزانية الطلبات");
+
+  const tracingEnabled = resetQueryTrace();
+  const home = await fetch(`${BASE}/`, {
+    headers: { Accept: "text/html", "User-Agent": "HomepageBudgetCheck/1.0" },
+  });
+  const homeHtml = await home.text();
+  check("الصفحة الرئيسية تستجيب بنجاح", home.ok, `HTTP ${home.status}`);
+  check(
+    "نوع محتوى الصفحة HTML صريح",
+    home.headers.get("content-type")?.toLowerCase().startsWith("text/html") === true,
+  );
+
+  const csp = home.headers.get("content-security-policy") ?? "";
+  check(
+    "CSP تمنع الإطارات والكائنات وتقيّد الأصل الافتراضي",
+    csp.includes("default-src 'self'") &&
+      csp.includes("frame-ancestors 'none'") &&
+      csp.includes("object-src 'none'"),
+  );
+  check(
+    "ترويسات منع MIME sniffing والإطارات مفعلة",
+    home.headers.get("x-content-type-options") === "nosniff" &&
+      home.headers.get("x-frame-options") === "DENY",
+  );
+  check(
+    "سياسة الصلاحيات تمنع الكاميرا والميكروفون والموقع",
+    ["camera=()", "microphone=()", "geolocation=()"].every((value) =>
+      (home.headers.get("permissions-policy") ?? "").includes(value),
+    ),
+  );
+  check(
+    "HTML الأولي ضمن ميزانية 256KiB",
+    Buffer.byteLength(homeHtml, "utf8") <= 256 * 1024,
+    `${Buffer.byteLength(homeHtml, "utf8")} bytes`,
+  );
+
+  const declaredResources = new Set(
+    [...homeHtml.matchAll(/(?:src|href)="([^"]+)"/giu)]
+      .map((match) => match[1])
+      .filter(
+        (value) =>
+          value.startsWith("/_next/") ||
+          /^\/(?:favicon\.ico|icon\.svg)(?:\?|$)/u.test(value),
+      ),
+  );
+  check(
+    "الأصول المعلنة في HTML لا تتجاوز 30 طلبًا",
+    declaredResources.size <= 30,
+    String(declaredResources.size),
+  );
+  const externalExecutableResources = [
+    ...homeHtml.matchAll(/<(?:script|link)[^>]+(?:src|href)="([^"]+)"/giu),
+  ]
+    .map((match) => match[1])
+    .filter((value) => /^https?:\/\//iu.test(value));
+  check(
+    "لا تحمل الصفحة سكربتات أو أنماطًا تنفيذية من أصل خارجي",
+    externalExecutableResources.length === 0,
+  );
+
+  if (!tracingEnabled) {
+    skip(
+      "ميزانية Queries للصفحة الرئيسية",
+      "تعمل داخل verify:query:isolated فقط",
+    );
+  } else {
+    const trace = readQueryTrace();
+    const fxReads = trace.filter(
+      (entry) => entry.verb === "SELECT" && entry.targets.includes("FxRate"),
+    ).length;
+    const apiLogWrites = trace.filter(
+      (entry) => entry.verb === "INSERT" && entry.targets.includes("AeApiLog"),
+    ).length;
+    const unexpected = trace.filter(
+      (entry) =>
+        !(
+          (entry.verb === "SELECT" && entry.targets.includes("FxRate")) ||
+          (entry.verb === "INSERT" && entry.targets.includes("AeApiLog"))
+        ),
+    );
+    check("الصفحة تقرأ سعر الصرف مرة واحدة", fxReads === 1, String(fxReads));
+    check(
+      "الصفحة تسجل استدعاءَي البحث والفئات فقط",
+      apiLogWrites === 2,
+      String(apiLogWrites),
+    );
+    check(
+      "إجمالي Queries المجهولة للصفحة لا يتجاوز ثلاثة",
+      trace.length === 3 && unexpected.length === 0,
+      `${trace.length} total / ${unexpected.length} unexpected`,
+    );
+  }
 
   // -------------------------------------------------------------------
   section("مسار الشحن — إعادة الحساب حسب الكمية");
@@ -106,10 +231,150 @@ async function main() {
     ["معرّف منتج فارغ", "/api/shipping?productId=&quantity=1", 400],
     ["كمية خارج النطاق", "/api/shipping?productId=X&quantity=999", 400],
     ["كمية غير رقمية", "/api/shipping?productId=X&quantity=abc", 400],
+    [
+      "معامل كمية مكرر",
+      "/api/shipping?productId=1005006891234501&quantity=1&quantity=2",
+      400,
+    ],
+    [
+      "معامل مجهول",
+      "/api/shipping?productId=1005006891234501&quantity=1&admin=true",
+      400,
+    ],
   ] as const) {
     const r = await fetch(`${BASE}${url}`);
     check(`${label} يُرفض بـ ${expected}`, r.status === expected, `HTTP ${r.status}`);
   }
+
+  // -------------------------------------------------------------------
+  section("فحص HTTP هجومي محدود");
+
+  const shippingPost = await fetch(`${BASE}/api/shipping`, { method: "POST" });
+  check(
+    "مسار القراءة يرفض POST",
+    shippingPost.status === 405,
+    `HTTP ${shippingPost.status}`,
+  );
+
+  const webhookGet = await fetch(`${BASE}/api/payments/webhook`);
+  check(
+    "مسار webhook يرفض GET",
+    webhookGet.status === 405,
+    `HTTP ${webhookGet.status}`,
+  );
+
+  const webhookWrongType = await fetch(`${BASE}/api/payments/webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" },
+    body: "not-json",
+  });
+  check(
+    "webhook يرفض نوع المحتوى الخاطئ",
+    webhookWrongType.status === 415,
+    `HTTP ${webhookWrongType.status}`,
+  );
+  check(
+    "رد webhook الحساس غير قابل للتخزين",
+    (webhookWrongType.headers.get("cache-control") ?? "").includes("no-store"),
+  );
+
+  const compressedAuth = await fetch(`${BASE}/api/auth/sign-in/email`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Content-Encoding": "gzip",
+      Origin: BASE,
+    },
+    body: "{}",
+  });
+  check(
+    "أجسام المصادقة المضغوطة مرفوضة قبل فكها",
+    compressedAuth.status === 415,
+    `HTTP ${compressedAuth.status}`,
+  );
+
+  const oversizedWebhook = await fetch(`${BASE}/api/payments/webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ padding: "x".repeat(70 * 1024) }),
+  });
+  check(
+    "webhook يرفض جسمًا يتجاوز 64KiB",
+    oversizedWebhook.status === 413,
+    `HTTP ${oversizedWebhook.status}`,
+  );
+
+  const hostileOrigin = await fetch(`${BASE}/api/auth/sign-in/email`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Origin: "https://attacker.invalid",
+    },
+    body: JSON.stringify({
+      email: "nobody@example.invalid",
+      password: "irrelevant-password",
+    }),
+  });
+  check(
+    "المصادقة ترفض أصلًا خارجيًا (CSRF)",
+    hostileOrigin.status === 403,
+    `HTTP ${hostileOrigin.status}`,
+  );
+  check(
+    "لا يسمح CORS للأصل المهاجم",
+    hostileOrigin.headers.get("access-control-allow-origin") !==
+      "https://attacker.invalid",
+  );
+
+  const injectedNonce = "attacker-controlled-nonce";
+  const nonceA = await fetch(`${BASE}/`, { headers: { "x-nonce": injectedNonce } });
+  const nonceB = await fetch(`${BASE}/`, { headers: { "x-nonce": injectedNonce } });
+  const cspA = nonceA.headers.get("content-security-policy") ?? "";
+  const cspB = nonceB.headers.get("content-security-policy") ?? "";
+  check(
+    "قيمة nonce يرسلها العميل لا تنعكس في CSP",
+    !cspA.includes(injectedNonce) && !cspB.includes(injectedNonce),
+  );
+  check("CSP تستخدم nonce جديدًا لكل طلب", cspA !== cspB);
+
+  const resetToken = "A".repeat(24);
+  const poisonedHost = await fetch(`${BASE}/reset-password?token=${resetToken}`, {
+    redirect: "manual",
+    headers: { "X-Forwarded-Host": "attacker.invalid" },
+  });
+  const poisonedLocation = poisonedHost.headers.get("location") ?? "";
+  const poisonedRedirectUrl = new URL(poisonedLocation, BASE);
+  check(
+    "المضيف المحقون لا يغيّر أصل تحويل استعادة كلمة المرور",
+    poisonedHost.status === 303 &&
+      poisonedRedirectUrl.origin === BASE &&
+      !poisonedLocation.includes("attacker.invalid"),
+    `HTTP ${poisonedHost.status}`,
+  );
+
+  const resetCapture = await fetch(`${BASE}/reset-password?token=${resetToken}`, {
+    redirect: "manual",
+  });
+  const resetLocation = resetCapture.headers.get("location") ?? "";
+  const resetCookies = resetCapture.headers.getSetCookie().join(";");
+  const normalizedResetCookies = resetCookies.toLowerCase();
+  const resetRedirectUrl = new URL(resetLocation, BASE);
+  check(
+    "تحويل رمز الاستعادة يستخدم الأصل الموثوق ولا يكشف الرمز",
+    resetCapture.status === 303 &&
+      resetRedirectUrl.origin === BASE &&
+      resetRedirectUrl.pathname === "/reset-password" &&
+      resetRedirectUrl.search === "" &&
+      !resetLocation.includes("attacker.invalid"),
+    `HTTP ${resetCapture.status}`,
+  );
+  check(
+    "رمز الاستعادة ينتقل إلى كوكي HttpOnly مقيّدة",
+    normalizedResetCookies.includes("httponly") &&
+      normalizedResetCookies.includes("samesite=lax") &&
+      normalizedResetCookies.includes("path=/reset-password") &&
+      !resetLocation.includes(resetToken),
+  );
 
   // -------------------------------------------------------------------
   section("الحماية");
@@ -219,6 +484,38 @@ async function main() {
       }
 
       if (authenticated && cookies.size > 0) {
+        if (resetQueryTrace()) {
+          const authenticatedHome = await fetch(`${BASE}/`, {
+            headers: { Cookie: cookieHeader(cookies) },
+          });
+          await authenticatedHome.arrayBuffer();
+          const authenticatedTrace = readQueryTrace();
+          const expectedWrites = authenticatedTrace.filter(
+            (entry) =>
+              entry.verb === "INSERT" && entry.targets.includes("AeApiLog"),
+          ).length;
+          const unexpectedWrites = authenticatedTrace.filter(
+            (entry) =>
+              ["INSERT", "UPDATE", "DELETE"].includes(entry.verb) &&
+              !entry.targets.includes("AeApiLog"),
+          );
+          check(
+            "الصفحة الرئيسية تعمل بجلسة موثقة",
+            authenticatedHome.ok,
+            `HTTP ${authenticatedHome.status}`,
+          );
+          check(
+            "صفحة المستخدم المسجل لا تتجاوز خمس Queries",
+            authenticatedTrace.length <= 5,
+            String(authenticatedTrace.length),
+          );
+          check(
+            "الجلسة لا تضيف كتابة غير سجلّي المورد",
+            expectedWrites === 2 && unexpectedWrites.length === 0,
+            `${expectedWrites} expected / ${unexpectedWrites.length} unexpected`,
+          );
+        }
+
         const adminOk = await fetch(`${BASE}/api/admin/orders`, {
           headers: { Cookie: cookieHeader(cookies) },
         });
