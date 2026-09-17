@@ -1,4 +1,5 @@
 import { env } from "@/lib/env";
+import type { Locale } from "@/lib/i18n/shared";
 import { callAe } from "./client";
 import { AeApiError } from "./errors";
 import {
@@ -786,10 +787,10 @@ export interface AeCategory {
   categoryName: string;
 }
 
-export async function getCategories(): Promise<AeCategory[]> {
+export async function getCategories(locale: Locale = "ar"): Promise<AeCategory[]> {
   const { data } = await callAe(
     "aliexpress.ds.category.get",
-    { language: "ar" },
+    { language: locale },
     { requiresAuth: false },
   );
 

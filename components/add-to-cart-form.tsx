@@ -100,7 +100,7 @@ export function AddToCartForm({
                     setQty(1);
                   }}
                   className={cx(
-                    "rounded-lg border px-4 py-2 text-sm transition",
+                    "min-h-11 rounded-lg border px-4 py-2 text-sm transition",
                     out && "cursor-not-allowed opacity-40 line-through",
                     s.skuAttr === skuAttr
                       ? "border-brand-600 bg-brand-50 font-medium text-brand-800 dark:bg-brand-900/30 dark:text-brand-200"

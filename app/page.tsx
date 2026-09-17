@@ -9,11 +9,11 @@ import { HeroCarousel, type HeroSlide } from "@/components/hero-carousel";
 import { env } from "@/lib/env";
 
 export default async function HomePage() {
-  const [featured, categories, t, locale] = await Promise.all([
+  const locale = await getLocale();
+  const [featured, categories, t] = await Promise.all([
     browse({ pageSize: 8, sortBy: "orders,desc" }),
-    getCategories().catch(() => []),
+    getCategories(locale).catch(() => []),
     getDictionary(),
-    getLocale(),
   ]);
 
   const features = [
@@ -80,7 +80,7 @@ export default async function HomePage() {
                 <Link
                   key={c.categoryId}
                   href={`/search?category=${c.categoryId}`}
-                  className="rounded-full border border-(--color-border-app) bg-(--color-surface) px-4 py-2 text-sm transition hover:border-brand-500 hover:text-brand-700"
+                  className="inline-flex min-h-11 items-center rounded-full border border-(--color-border-app) bg-(--color-surface) px-4 py-2 text-sm transition hover:border-brand-500 hover:text-brand-700"
                 >
                   {c.categoryName}
                 </Link>
@@ -92,7 +92,7 @@ export default async function HomePage() {
         <section>
           <div className="mb-4 flex items-baseline justify-between">
             <h2 className="text-xl font-bold">{t.home.bestSelling}</h2>
-            <Link href="/search" className="text-sm text-brand-600 hover:underline">
+            <Link href="/search" className="inline-flex min-h-11 items-center text-sm text-brand-600 hover:underline">
               {t.home.viewAll}
             </Link>
           </div>

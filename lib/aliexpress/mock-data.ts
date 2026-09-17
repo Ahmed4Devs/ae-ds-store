@@ -128,19 +128,19 @@ const CATALOG_SEED = [
   },
 ];
 
-const CATEGORY_NAMES: Record<string, string> = {
-  "70804": "سماعات وصوتيات",
-  "1511": "ساعات ذكية",
-  "70801": "شواحن وكوابل",
-  "1503": "أجهزة مطبخ",
-  "34": "إكسسوارات سيارات",
-  "39": "إضاءة",
-  "70802": "ملحقات حاسب",
-  "1501": "أدوات منزلية",
+const CATEGORY_NAMES: Record<string, { ar: string; en: string }> = {
+  "70804": { ar: "سماعات وصوتيات", en: "Headphones & Audio" },
+  "1511": { ar: "ساعات ذكية", en: "Smart Watches" },
+  "70801": { ar: "شواحن وكوابل", en: "Chargers & Cables" },
+  "1503": { ar: "أجهزة مطبخ", en: "Kitchen Appliances" },
+  "34": { ar: "إكسسوارات سيارات", en: "Car Accessories" },
+  "39": { ar: "إضاءة", en: "Lighting" },
+  "70802": { ar: "ملحقات حاسب", en: "Computer Accessories" },
+  "1501": { ar: "أدوات منزلية", en: "Home Essentials" },
 };
 
 /** صورة SVG مضمّنة — تتجنّب الاعتماد على خدمات خارجية في وضع المحاكاة. */
-function placeholderImage(key: string, label: string): string {
+function placeholderImage(key: string): string {
   const palette: Record<string, [string, string]> = {
     earbuds: ["#1e293b", "#38bdf8"],
     watch: ["#0f172a", "#a78bfa"],
@@ -152,7 +152,7 @@ function placeholderImage(key: string, label: string): string {
     bottle: ["#0c4a6e", "#7dd3fc"],
   };
   const [bg, fg] = palette[key] ?? ["#1e293b", "#94a3b8"];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${bg}"/><stop offset="100%" stop-color="${fg}"/></linearGradient></defs><rect width="600" height="600" fill="url(#g)"/><circle cx="300" cy="250" r="110" fill="rgba(255,255,255,.14)"/><text x="300" y="470" font-family="system-ui,sans-serif" font-size="34" fill="rgba(255,255,255,.92)" text-anchor="middle">${label}</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="600" viewBox="0 0 600 600"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${bg}"/><stop offset="100%" stop-color="${fg}"/></linearGradient></defs><rect width="600" height="600" fill="url(#g)"/><circle cx="300" cy="300" r="110" fill="rgba(255,255,255,.14)"/></svg>`;
   // image_urls في استجابة AliExpress سلسلة مفصولة بفواصل منقوطة. وضع
   // `;utf8` داخل كل data URL يجعل محلّل الواجهة يقسم الصورة نفسها نصفين.
   // ترميز SVG نسبيًا لا يحتاج هذا الوسيط؛ الصيغة ذات الفاصلة وحدها صحيحة.
@@ -182,7 +182,9 @@ function mockTextSearch(params: Record<string, unknown>) {
       (p) =>
         p.title.toLowerCase().includes(keyword) ||
         p.titleAr.includes(keyword) ||
-        (CATEGORY_NAMES[p.cateId] ?? "").includes(keyword),
+        Object.values(CATEGORY_NAMES[p.cateId] ?? {}).some((name) =>
+          name.toLowerCase().includes(keyword),
+        ),
     );
   }
 
@@ -213,7 +215,7 @@ function mockTextSearch(params: Record<string, unknown>) {
       products: page.map((p) => ({
         itemId: p.itemId,
         title: p.title,
-        itemMainPic: placeholderImage(p.image, p.titleAr.slice(0, 24)),
+        itemMainPic: placeholderImage(p.image),
         itemUrl: `https://www.aliexpress.com/item/${p.itemId}.html`,
         salePrice: String(p.price),
         salePriceCurrency: "USD",
@@ -240,9 +242,9 @@ function mockProductGet(params: Record<string, unknown>) {
   }
 
   const images = [
-    placeholderImage(seed.image, seed.titleAr.slice(0, 24)),
-    placeholderImage(seed.image, "عرض جانبي"),
-    placeholderImage(seed.image, "داخل العلبة"),
+    placeholderImage(seed.image),
+    placeholderImage(seed.image),
+    placeholderImage(seed.image),
   ];
 
   return {
@@ -273,7 +275,7 @@ function mockProductGet(params: Record<string, unknown>) {
           sku_bulk_order: "3",
           sku_available_stock: String(v.stock),
           currency_code: "USD",
-          sku_image: placeholderImage(seed.image, v.label),
+          sku_image: placeholderImage(seed.image),
           ae_sku_property_dtos: {
             ae_sku_property_d_t_o: [
               {
@@ -281,7 +283,7 @@ function mockProductGet(params: Record<string, unknown>) {
                 sku_property_name: "الخيار",
                 sku_property_value: v.label,
                 property_value_definition_name: v.label,
-                sku_image: placeholderImage(seed.image, v.label),
+                sku_image: placeholderImage(seed.image),
               },
             ],
           },
@@ -575,15 +577,16 @@ function mockTracking(params: Record<string, unknown>) {
   };
 }
 
-function mockCategoryGet() {
+function mockCategoryGet(params: Record<string, unknown>) {
+  const locale = params.language === "en" ? "en" : "ar";
   return {
     resp_result: {
       resp_code: "200",
       resp_msg: "success",
       result: {
-        categories: Object.entries(CATEGORY_NAMES).map(([id, name]) => ({
+        categories: Object.entries(CATEGORY_NAMES).map(([id, names]) => ({
           category_id: id,
-          category_name: name,
+          category_name: names[locale],
         })),
       },
     },
@@ -672,5 +675,7 @@ export async function getMockResponse<T>(
 
 /** الكتالوج الوهمي — تستخدمه سكربتات البذر. */
 export const MOCK_CATALOG = CATALOG_SEED;
-export const MOCK_CATEGORIES = CATEGORY_NAMES;
+export const MOCK_CATEGORIES: Record<string, string> = Object.fromEntries(
+  Object.entries(CATEGORY_NAMES).map(([id, names]) => [id, names.ar]),
+);
 export { placeholderImage };

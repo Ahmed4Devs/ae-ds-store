@@ -91,7 +91,7 @@ function TriggerButton({
       aria-haspopup="menu"
       aria-expanded={open}
       className={cx(
-        "grid size-9 place-items-center rounded-full border border-(--color-border-app) transition",
+        "grid size-11 place-items-center rounded-full border border-(--color-border-app) transition",
         open
           ? "border-brand-400 text-brand-700"
           : "text-ink-600 hover:border-brand-400 hover:text-brand-700 dark:text-ink-300",
@@ -141,7 +141,7 @@ function MenuItem({
       aria-checked={active}
       onClick={onClick}
       className={cx(
-        "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
+        "flex min-h-11 w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
         active
           ? "bg-brand-50 font-semibold text-brand-700 dark:bg-brand-600/15 dark:text-brand-300"
           : "text-ink-600 hover:bg-ink-100 dark:text-ink-300 dark:hover:bg-ink-800",

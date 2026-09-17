@@ -23,7 +23,7 @@ export function AnnouncementBar({
   if (!visible) return null;
 
   return (
-    <div className="relative bg-amber-500 px-9 py-1.5 text-center text-xs font-medium text-amber-950">
+    <div className="relative flex min-h-11 items-center justify-center bg-amber-500 px-12 py-1.5 text-center text-xs font-medium text-amber-950">
       {children}
       <button
         type="button"
@@ -35,7 +35,7 @@ export function AnnouncementBar({
             await dismissBannerAction();
           });
         }}
-        className="absolute inset-y-0 end-2 grid w-7 place-items-center rounded text-amber-950/70 transition hover:text-amber-950"
+        className="absolute end-0 top-1/2 grid size-11 -translate-y-1/2 place-items-center rounded text-amber-950/70 transition hover:text-amber-950"
       >
         <svg
           viewBox="0 0 24 24"

@@ -73,7 +73,7 @@ export function HeroCarousel({
 
   return (
     <section
-      className="relative mb-10 min-h-92 overflow-hidden rounded-2xl bg-brand-700 text-white shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 sm:min-h-105"
+      className="relative mb-10 min-h-112 overflow-hidden rounded-2xl bg-brand-700 text-white shadow-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 sm:min-h-105"
       aria-label={carouselLabel}
       aria-roledescription="carousel"
       tabIndex={0}
@@ -119,14 +119,14 @@ export function HeroCarousel({
 
             <div className="absolute inset-0 bg-gradient-to-r from-ink-900/95 via-brand-800/85 to-brand-500/25 rtl:bg-gradient-to-l" />
 
-            <div className="relative z-10 flex min-h-92 items-center px-16 py-12 sm:min-h-105 sm:px-20 lg:px-24">
+            <div className="relative z-10 flex min-h-112 items-center px-16 pb-24 pt-8 sm:min-h-105 sm:px-20 sm:py-12 lg:px-24">
               <div className="max-w-2xl">
                 {index === 0 ? (
-                  <h1 className="line-clamp-3 text-3xl font-bold leading-tight drop-shadow-sm sm:text-4xl">
+                  <h1 className="line-clamp-3 text-2xl font-bold leading-tight drop-shadow-sm sm:text-4xl">
                     {slide.title}
                   </h1>
                 ) : (
-                  <h2 className="line-clamp-3 text-3xl font-bold leading-tight drop-shadow-sm sm:text-4xl">
+                  <h2 className="line-clamp-3 text-2xl font-bold leading-tight drop-shadow-sm sm:text-4xl">
                     {slide.title}
                   </h2>
                 )}
@@ -165,7 +165,7 @@ export function HeroCarousel({
             <Chevron direction="right" />
           </button>
 
-          <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 gap-2 rounded-full bg-ink-900/35 px-3 py-2 backdrop-blur-sm">
+          <div className="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 rounded-full bg-ink-900/35 p-1 backdrop-blur-sm sm:bottom-4">
             {slides.map((slide, index) => (
               <button
                 key={slide.id}
@@ -173,12 +173,17 @@ export function HeroCarousel({
                 onClick={() => setActiveIndex(index)}
                 aria-label={`${goToSlideLabel} ${index + 1}`}
                 aria-current={index === currentIndex ? "true" : undefined}
-                className={`h-2.5 rounded-full transition-all ${
-                  index === currentIndex
-                    ? "w-7 bg-white"
-                    : "w-2.5 bg-white/55 hover:bg-white/80"
-                }`}
-              />
+                className="group grid size-11 place-items-center rounded-full"
+              >
+                <span
+                  aria-hidden="true"
+                  className={`h-2.5 rounded-full transition-all ${
+                    index === currentIndex
+                      ? "w-7 bg-white"
+                      : "w-2.5 bg-white/55 group-hover:bg-white/80"
+                  }`}
+                />
+              </button>
             ))}
           </div>
         </>

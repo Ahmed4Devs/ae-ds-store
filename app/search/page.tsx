@@ -114,7 +114,7 @@ export default async function SearchPage(props: PageProps<"/search">) {
                 key={s.value}
                 href={buildHref({ sort: s.value, page: undefined })}
                 className={
-                  "rounded-full border px-3.5 py-1.5 text-sm transition " +
+                  "inline-flex min-h-11 items-center rounded-full border px-3.5 py-1.5 text-sm transition " +
                   (sort === s.value
                     ? "border-brand-600 bg-brand-600 text-white"
                     : "border-(--color-border-app) hover:border-brand-400")
@@ -141,7 +141,7 @@ export default async function SearchPage(props: PageProps<"/search">) {
                 {page > 1 && (
                   <Link
                     href={buildHref({ page: page - 1 })}
-                    className="rounded-lg border border-(--color-border-app) px-4 py-2 text-sm hover:border-brand-400"
+                    className="inline-flex min-h-11 items-center rounded-lg border border-(--color-border-app) px-4 py-2 text-sm hover:border-brand-400"
                   >
                     {t.common.previous}
                   </Link>
@@ -152,7 +152,7 @@ export default async function SearchPage(props: PageProps<"/search">) {
                 {page < totalPages && (
                   <Link
                     href={buildHref({ page: page + 1 })}
-                    className="rounded-lg border border-(--color-border-app) px-4 py-2 text-sm hover:border-brand-400"
+                    className="inline-flex min-h-11 items-center rounded-lg border border-(--color-border-app) px-4 py-2 text-sm hover:border-brand-400"
                   >
                     {t.common.next}
                   </Link>

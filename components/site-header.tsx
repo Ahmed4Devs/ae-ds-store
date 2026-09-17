@@ -29,7 +29,7 @@ export async function SiteHeader() {
 
       <header className="sticky top-0 z-40 border-b border-(--color-border-app) bg-(--color-background)/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-3 px-4">
-          <Link href="/" className="flex shrink-0 items-center gap-2 text-lg font-bold">
+          <Link href="/" className="flex min-h-11 shrink-0 items-center gap-2 text-lg font-bold">
             <span className="grid size-9 place-items-center rounded-lg bg-brand-600 text-white">
               {locale === "ar" ? "و" : "W"}
             </span>
@@ -43,12 +43,12 @@ export async function SiteHeader() {
                 type="search"
                 placeholder={t.nav.search}
                 aria-label={t.nav.searchLabel}
-                className="h-10 w-full rounded-full border border-(--color-border-app) bg-(--color-surface) px-4 text-sm outline-none focus:border-brand-500 ltr:pr-11 rtl:pl-11"
+                className="h-11 w-full rounded-full border border-(--color-border-app) bg-(--color-surface) px-4 text-sm outline-none focus:border-brand-500 ltr:pr-12 rtl:pl-12"
               />
               <button
                 type="submit"
                 aria-label={t.nav.searchLabel}
-                className="absolute top-1 grid size-8 place-items-center rounded-full text-ink-500 hover:bg-ink-100 ltr:right-1 rtl:left-1 dark:hover:bg-ink-800"
+                className="absolute inset-y-0 grid size-11 place-items-center rounded-full text-ink-500 hover:bg-ink-100 ltr:right-0 rtl:left-0 dark:hover:bg-ink-800"
               >
                 <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2">
                   <circle cx="11" cy="11" r="7" />
@@ -74,14 +74,14 @@ export async function SiteHeader() {
 
             <Link
               href="/orders"
-              className="hidden rounded-lg px-3 py-2 text-sm hover:bg-ink-100 sm:inline-block dark:hover:bg-ink-800"
+              className="hidden min-h-11 items-center rounded-lg px-3 py-2 text-sm hover:bg-ink-100 sm:inline-flex dark:hover:bg-ink-800"
             >
               {t.nav.myOrders}
             </Link>
 
             <Link
               href="/cart"
-              className="relative rounded-lg px-3 py-2 text-sm hover:bg-ink-100 dark:hover:bg-ink-800"
+              className="relative inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-sm hover:bg-ink-100 dark:hover:bg-ink-800"
             >
               {t.nav.cart}
               {count > 0 && (
@@ -94,14 +94,14 @@ export async function SiteHeader() {
             {user ? (
               <Link
                 href="/account"
-                className="rounded-lg px-3 py-2 text-sm font-medium hover:bg-ink-100 dark:hover:bg-ink-800"
+                className="inline-flex min-h-11 items-center rounded-lg px-3 py-2 text-sm font-medium hover:bg-ink-100 dark:hover:bg-ink-800"
               >
                 {t.nav.account}
               </Link>
             ) : (
               <Link
                 href="/login"
-                className="rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                className="inline-flex min-h-11 items-center rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
               >
                 {t.nav.login}
               </Link>
@@ -142,34 +142,34 @@ export async function SiteFooter() {
             <p className="mb-2 font-semibold">{t.footer.links}</p>
             <ul className="space-y-1.5 text-ink-500">
               <li>
-                <Link href="/search" className="hover:text-brand-600">
+                <Link href="/search" className="inline-flex min-h-11 items-center hover:text-brand-600">
                   {t.footer.shop}
                 </Link>
               </li>
               <li>
-                <Link href="/orders" className="hover:text-brand-600">
+                <Link href="/orders" className="inline-flex min-h-11 items-center hover:text-brand-600">
                   {t.footer.trackOrder}
                 </Link>
               </li>
               {/* السياسات في التذييل لا في الرأس: تُقرأ مرّة عند الحاجة،
                   ووجودها ظاهرًا في كل صفحة شرط في متاجر التجزئة السعودية. */}
               <li>
-                <Link href="/policies/shipping" className="hover:text-brand-600">
+                <Link href="/policies/shipping" className="inline-flex min-h-11 items-center hover:text-brand-600">
                   {t.footer.shippingPolicy}
                 </Link>
               </li>
               <li>
-                <Link href="/policies/returns" className="hover:text-brand-600">
+                <Link href="/policies/returns" className="inline-flex min-h-11 items-center hover:text-brand-600">
                   {t.policies.returnsTitle}
                 </Link>
               </li>
               <li>
-                <Link href="/policies/privacy" className="hover:text-brand-600">
+                <Link href="/policies/privacy" className="inline-flex min-h-11 items-center hover:text-brand-600">
                   {t.policies.privacyTitle}
                 </Link>
               </li>
               <li>
-                <Link href="/policies/terms" className="hover:text-brand-600">
+                <Link href="/policies/terms" className="inline-flex min-h-11 items-center hover:text-brand-600">
                   {t.policies.termsTitle}
                 </Link>
               </li>

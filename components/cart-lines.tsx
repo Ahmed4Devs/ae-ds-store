@@ -64,14 +64,14 @@ function CartLineRow({
   return (
     <Card
       className={cx(
-        "flex gap-4 p-4 transition",
+        "flex items-start gap-3 p-3 transition sm:gap-4 sm:p-4",
         pending && "opacity-60",
         line.issue && "border-amber-400",
       )}
     >
       <Link
         href={`/product/${line.aeProductId}`}
-        className="size-24 shrink-0 overflow-hidden rounded-lg bg-ink-100 dark:bg-ink-800"
+        className="size-20 shrink-0 overflow-hidden rounded-lg bg-ink-100 sm:size-24 dark:bg-ink-800"
       >
         {line.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -111,14 +111,14 @@ function CartLineRow({
           </p>
         )}
 
-        <div className="mt-3 flex items-center justify-between gap-3">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 sm:gap-3">
           <div className="flex items-center rounded-lg border border-(--color-border-app)">
             <button
               type="button"
               aria-label={labels.decrease}
               disabled={pending}
               onClick={() => change(line.quantity - 1)}
-              className="size-9 text-sm hover:bg-ink-100 dark:hover:bg-ink-800"
+              className="size-11 text-sm hover:bg-ink-100 dark:hover:bg-ink-800"
             >
               −
             </button>
@@ -128,7 +128,7 @@ function CartLineRow({
               aria-label={labels.increase}
               disabled={pending || line.quantity >= maxQty}
               onClick={() => change(line.quantity + 1)}
-              className="size-9 text-sm hover:bg-ink-100 disabled:opacity-30 dark:hover:bg-ink-800"
+              className="size-11 text-sm hover:bg-ink-100 disabled:opacity-30 dark:hover:bg-ink-800"
             >
               +
             </button>
@@ -147,7 +147,7 @@ function CartLineRow({
             type="button"
             disabled={pending}
             onClick={() => change(0)}
-            className="text-xs text-red-600 hover:underline dark:text-red-400"
+            className="inline-flex min-h-11 shrink-0 items-center px-2 text-xs text-red-600 hover:underline dark:text-red-400"
           >
             {labels.remove}
           </button>
