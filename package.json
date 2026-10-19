@@ -33,18 +33,18 @@
     "verify:store": "tsx scripts/verify-store.ts"
   },
   "dependencies": {
-    "@prisma/adapter-pg": "^7.10.0",
-    "@prisma/client": "^7.10.0",
-    "@tanstack/react-query": "^5.102.8",
-    "@tanstack/react-query-devtools": "^5.102.8",
-    "better-auth": "^1.7.3",
-    "next": "^16.3.4",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "@tanstack/react-query": "^5.104.3",
+    "@tanstack/react-query-devtools": "^5.104.3",
+    "better-auth": "^1.7.10",
+    "next": "^16.4.2",
     "nodemailer": "^9.1.1",
-    "pg": "^8.23.0",
+    "pg": "^8.23.1",
     "qrcode": "^1.5.4",
-    "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "zod": "^4.5.4"
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
